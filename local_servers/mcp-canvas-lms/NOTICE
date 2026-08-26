@@ -1,0 +1,16 @@
+Third-party component, vendored into Cowork Bench
+=================================================
+
+Upstream:  https://github.com/DMontgomery40/mcp-canvas-lms
+Package:   canvas-mcp-server
+Author:    David Montgomery <dmontg@gmail.com>
+Declared:  "license": "MIT" (package.json)
+
+The upstream repository declares MIT in package.json but publishes no LICENSE
+file, so the copyright line and permission text that MIT requires on
+redistribution do not exist upstream and are NOT reproduced here — writing them
+on the author's behalf would be a fabrication.
+
+This directory is redistributed on the strength of that declaration. Anyone
+packaging or relicensing this code should obtain the license text from the
+author rather than relying on this note.
