@@ -25,9 +25,9 @@ import argparse
 import json
 import sys
 
-from .check_local import check_local, check_exam_dates, check_instructors
-from .check_gcal import check_gcal
-from .check_email import check_email
+from check_local import check_local, check_exam_dates, check_instructors
+from check_gcal import check_gcal
+from check_email import check_email
 
 
 PASS_COUNT = 0

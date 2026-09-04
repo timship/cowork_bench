@@ -31,9 +31,9 @@ import sys
 import openpyxl
 import psycopg2
 
-from .check_local import check_local
-from .check_gsheet import check_gsheet
-from .check_email import check_email
+from check_local import check_local
+from check_gsheet import check_gsheet
+from check_email import check_email
 
 DB_CONFIG = {
     "host": os.environ.get("PGHOST", "localhost"),
