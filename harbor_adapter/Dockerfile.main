@@ -1,0 +1,76 @@
+ARG COWORK_BASE_IMAGE=cowork-pack:latest
+FROM ${COWORK_BASE_IMAGE}
+
+# Upstream runs the Python `playwright` command before installing any
+# Playwright package. The vendored Node MCP does contain the CLI, so install
+# Chromium from there and keep it in a stable image-level path.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN /opt/local_servers/playwright-mcp/node_modules/.bin/playwright install chromium
+
+# LiteLLM 1.92 imports its proxy MCP chat handler for tool-enabled requests but
+# the base install omits that handler's runtime dependencies.
+RUN uv pip install --python /opt/venv/bin/python 'litellm[proxy]==1.92.0'
+
+# CLI agents are preinstalled because evaluation containers cannot rely on
+# GitHub/nvm/package downloads during agent setup. Node 22 is already provided
+# by cowork-pack.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl git build-essential tmux \
+    && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @qwen-code/qwen-code@0.19.9
+RUN uv python install 3.12.11 \
+    && uv venv /opt/openhands-venv --python 3.12.11 \
+    && uv pip install --prerelease=allow --python /opt/openhands-venv/bin/python 'openhands-ai==0.62.0' \
+    && /opt/openhands-venv/bin/python -m openhands.core.main --version
+
+# The localized MOEX fork added a PostgreSQL adapter but did not declare its
+# psycopg2 runtime dependency. Keep this small fix after the heavy, stable CLI
+# layers so changing it does not duplicate the OpenHands installation.
+RUN uv pip install \
+    --python /opt/local_servers/moex-finance-mcp/.venv/bin/python \
+    'psycopg2-binary>=2.9.9'
+
+# The localized MOEX server prints a startup banner to stdout. For an MCP
+# stdio transport stdout is the JSON-RPC wire, so Strands rejects that banner
+# before initialization. Preserve the diagnostic on stderr instead.
+RUN sed -i \
+    's/print("Starting MOEX MCP server...")/print("Starting MOEX MCP server...", file=__import__("sys").stderr)/' \
+    /opt/local_servers/moex-finance-mcp/server.py \
+    && grep -q 'file=__import__("sys").stderr' \
+      /opt/local_servers/moex-finance-mcp/server.py
+
+# Keep model request controls in the thin Harbor image so they can be updated
+# without rebuilding the much larger cowork-pack base layer.
+COPY strands_runner/agent.py /workspace/strands_runner/agent.py
+COPY strands_runner/model.py /workspace/strands_runner/model.py
+COPY local_servers/mcp-google-sheets/src/mcp_google_sheets/server.py \
+    /opt/local_servers/mcp-google-sheets/src/mcp_google_sheets/server.py
+COPY configs/mcp_servers/moex-finance.yaml \
+    /workspace/configs/mcp_servers/moex-finance.yaml
+COPY configs/mcp_servers/yahoo-finance.yaml \
+    /workspace/configs/mcp_servers/yahoo-finance.yaml
+COPY configs/mcp_servers/playwright_with_chunk.yaml \
+    /workspace/configs/mcp_servers/playwright_with_chunk.yaml
+COPY configs/mcp_servers/pptx.yaml \
+    /workspace/configs/mcp_servers/pptx.yaml
+
+# Harbor uploads verifier code only after the agent phase. Keep the runtime
+# task tree free of answer keys so the Cowork agent cannot inspect them.
+RUN find /workspace/tasks/finalpool -type d \
+      \( -name evaluation -o -name groundtruth_workspace -o -name groundtruth_workspace_cn \) \
+      -prune -exec rm -rf {} + \
+    && rm -rf /workspace/dumps \
+    && mkdir -p /workspace/dumps /logs/agent /logs/verifier /logs/artifacts
+
+# Fail the build if the pinned vendored Playwright revision changes without a
+# corresponding config update. Silent browser mismatches otherwise appear only
+# when the first browser task calls a tool.
+RUN test -x /ms-playwright/chromium-1182/chrome-linux/chrome \
+    && grep -q -- '--no-sandbox' /workspace/configs/mcp_servers/playwright_with_chunk.yaml
+
+ENV UV_NO_SYNC=1 \
+    LOCAL_SERVERS_PATH=/opt/local_servers \
+    PYTHON_BIN=/opt/venv/bin/python3 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /workspace

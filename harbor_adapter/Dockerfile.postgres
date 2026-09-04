@@ -1,0 +1,4 @@
+FROM postgres:15
+
+# The image is immutable; every Harbor trial initializes a fresh tmpfs PGDATA.
+COPY db/ /docker-entrypoint-initdb.d/

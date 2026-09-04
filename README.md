@@ -157,6 +157,24 @@ AGENT_ENTRY=my_runner.py AGENT_PHASE_AWARE=1 \
 - **Полностью локально и воспроизводимо.** Всё окружение поднимается из одного Docker Compose. Ключи к внешним сервисам на этапе оценки не нужны. Дамп PostgreSQL версионируется и детерминирован — результаты воспроизводимы между машинами и во времени.
 - **Реалистичная сложность.** Задачи списаны с реальных рабочих процессов: HR-аналитика в Excel, сверка сдач LMS с дедлайнами в календаре, генерация презентаций из собранных данных и подобные многошаговые цели. Большинству задач нужно 4–7 инструментов.
 
+## Harbor packaging
+
+`harbor_adapter/` packages the same 496 tasks as self-contained
+[Harbor](https://github.com/laude-institute/harbor) tasks. Task texts, fixtures,
+evaluators, and the PostgreSQL seed are unchanged; MCP is exposed over HTTP so
+any stock Harbor agent can run the benchmark from `task.toml` without a
+benchmark-specific agent class.
+
+```bash
+python3 harbor_adapter/generate_harbor_canonical.py \
+  --output datasets/cowork_harbor_canonical_v1 --all
+python3 harbor_adapter/validate_harbor_canonical.py \
+  datasets/cowork_harbor_canonical_v1
+```
+
+See [`docs/HARBOR_CANONICAL_PACKAGING.md`](./docs/HARBOR_CANONICAL_PACKAGING.md)
+and [`harbor_adapter/README.md`](./harbor_adapter/README.md).
+
 ## Acknowledgements
 
 Cowork Bench построен на инфраструктуре и исходных пайплайнах данных проекта:

@@ -1,0 +1,17 @@
+# Harbor job overlay: stock OpenHands. MCP URLs come from each task.toml.
+# Polar/TRACE are job-level (Fleet dind_runner extra_hosts + polar.model_served),
+# not task-specific. Switching to Qwen Code is a different job file, not a
+# task change.
+
+jobs_dir: jobs
+timeout_multiplier: 1.0
+orchestrator:
+  type: local
+  n_concurrent_trials: 1
+environment:
+  type: docker
+  delete: true
+agents:
+  - name: openhands
+    # model_name / polar.model_served supplied by the Fleet/Harbor job runner.
+datasets: []

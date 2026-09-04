@@ -1,0 +1,19 @@
+# Harbor job overlay: stock Qwen Code.
+# Harbor AgentName enum is `qwen-coder` (not `qwen-code`).
+# MCP URLs come from each task.toml. Polar/TRACE are job-level.
+
+jobs_dir: jobs
+timeout_multiplier: 1.0
+orchestrator:
+  type: local
+  n_concurrent_trials: 1
+environment:
+  type: docker
+  delete: true
+agents:
+  - name: qwen-coder
+    kwargs:
+      # Pin to the CLI prebaked in harbor-main. Without this the stock install
+      # resolves @latest (0.21.13 today) and runs stop being reproducible.
+      version: "0.19.9"
+datasets: []

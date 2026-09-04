@@ -1,0 +1,7 @@
+# Stock Harbor OpenHands; no Cowork-specific agent class.
+# Polar / LLM routing stays with Fleet/Harbor job YAML; this file only selects
+# the installed Harbor adapter. MCP URLs come from task.toml.
+# Fleet job kwargs should set python_version="3.12.11" and version="0.62.0"
+# to match harbor-main's prebaked /opt/openhands-venv (Harbor default is 3.13).
+
+agent_name: openhands

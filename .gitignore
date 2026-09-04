@@ -39,3 +39,6 @@ docs/presentation.html
 docs/presentation.pdf
 benchmark_logs/
 EXPERIMENTS.local.md
+
+# Generated Harbor task trees
+datasets/

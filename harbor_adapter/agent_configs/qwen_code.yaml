@@ -1,0 +1,8 @@
+# Stock Harbor Qwen Code; no Cowork-specific agent class.
+# MCP URLs come from task.toml [[environment.mcp_servers]].
+
+# Harbor AgentName enum is `qwen-coder`. `qwen-code` is not a valid Harbor name.
+# Fleet job kwargs must set version="0.19.9" to match the CLI prebaked in
+# harbor-main (/usr/bin/qwen). Stock install defaults to @latest, which drifts.
+
+agent_name: qwen-coder
