@@ -23,109 +23,118 @@ from generate_harbor_canonical import (  # noqa: E402
 
 
 class GraderIsolationTests(unittest.TestCase):
-    """Regression tests for DB grader sidecar isolation and handoff verification."""
+    """Regression tests for grader sidecar isolation and handoff verification."""
 
     def test_db_compose_has_grader_on_db_net_only(self) -> None:
-        """Verify DB docker-compose attaches grader exclusively to db_net and main mounts grader_out read-only."""
+        """DB grader stays on db_net; main mounts grader_out read-only."""
         yml = _compose("demo-task", has_db=True, has_workspace=True, has_mock=False)
         self.assertIn("grader:", yml)
         self.assertIn("grader_out:/grader_out:ro", yml)
-        # main networks block should not list db_net as a main attachment.
+        self.assertIn("HOST_AGENT_LOGS_PATH", yml)
+        self.assertIn("/logs/agent:ro", yml)
         main = yml.split("workspace-prep:")[0]
         self.assertIn("- agent_net", main)
         self.assertNotIn("- db_net", main)
+        self.assertNotIn("../tests:/tests", main)
         grader = yml.split("\n  grader:")[1].split("mcp-gateway-public:")[0]
         self.assertIn("- db_net", grader)
         self.assertNotIn("- agent_net", grader)
+        self.assertIn("../tests:/tests:ro", grader)
+        self.assertIn("HOST_AGENT_LOGS_PATH", grader)
+        self.assertIn("/logs/agent:ro", grader)
         self.assertIn('COWORK_GRADER: "1"', grader)
         self.assertIn("PGHOST: postgres", grader)
 
-    def test_no_db_compose_omits_grader(self) -> None:
-        """Verify non-DB docker-compose does not include grader sidecar."""
+    def test_non_db_compose_has_isolated_grader(self) -> None:
+        """non-DB also gets grader on grader_net with RO agent logs and /tests."""
         yml = _compose("demo-task", has_db=False, has_workspace=True, has_mock=False)
-        self.assertNotIn("grader:", yml)
-        self.assertNotIn("grader_out", yml)
+        self.assertIn("grader:", yml)
+        self.assertIn("grader_out:/grader_out:ro", yml)
+        self.assertIn("grader_net:", yml)
+        main = yml.split("workspace-prep:")[0]
+        self.assertNotIn("../tests:/tests", main)
+        grader = yml.split("\n  grader:")[1].split("mcp-gateway-public:")[0]
+        self.assertIn("- grader_net", grader)
+        self.assertNotIn("- agent_net", grader)
+        self.assertNotIn("- db_net", grader)
+        self.assertIn("../tests:/tests:ro", grader)
+        self.assertIn("HOST_AGENT_LOGS_PATH", grader)
+        self.assertIn("/logs/agent:ro", grader)
+        self.assertIn('COWORK_GRADER: "1"', grader)
+        self.assertNotIn("PGHOST: postgres", grader)
+        # Agent log mount must be read-only (no bare RW bind to /logs/agent).
+        self.assertRegex(grader, r"/logs/agent:ro")
+        self.assertIn("HOST_AGENT_LOGS_PATH", grader)
 
-    def test_task_toml_collects_grader_for_db(self) -> None:
-        """DB tasks: finalize + test.sh on grader; no finalize on main."""
-        toml = _task_toml("demo-task", [{"name": "emails"}], has_db=True)
-        self.assertIn('service = "grader"', toml)
-        self.assertIn("bash /tests/test.sh", toml)
-        self.assertIn("workspace_lifecycle.py finalize", toml)
-        # Finalize collect must not be bound to main when grader exists.
-        blocks = toml.split("[[verifier.collect]]")
-        finalize_blocks = [
-            b for b in blocks[1:] if "workspace_lifecycle.py finalize" in b
-        ]
-        self.assertEqual(len(finalize_blocks), 1)
-        self.assertIn('service = "grader"', finalize_blocks[0])
-        self.assertNotIn('service = "main"', finalize_blocks[0])
-        toml2 = _task_toml("demo-task", [{"name": "excel"}], has_db=False)
-        self.assertNotIn('service = "grader"', toml2)
-        self.assertIn('service = "main"', toml2)
-        self.assertIn("workspace_lifecycle.py finalize", toml2)
+    def test_task_toml_collects_grader_for_db_and_non_db(self) -> None:
+        """Both categories: finalize + test.sh on grader; never finalize on main."""
+        for has_db in (True, False):
+            toml = _task_toml("demo-task", [{"name": "emails"}], has_db=has_db)
+            self.assertIn('service = "grader"', toml)
+            self.assertIn("bash /tests/test.sh", toml)
+            self.assertIn("workspace_lifecycle.py finalize", toml)
+            blocks = toml.split("[[verifier.collect]]")
+            finalize_blocks = [
+                b for b in blocks[1:] if "workspace_lifecycle.py finalize" in b
+            ]
+            self.assertEqual(len(finalize_blocks), 1)
+            self.assertIn('service = "grader"', finalize_blocks[0])
+            self.assertNotIn('service = "main"', finalize_blocks[0])
 
     def test_ua_verifier_keeps_run_eval_not_external_oracle(self) -> None:
         """In-container UA path must stay on run_eval (no EXTERNAL MODE=oracle)."""
         for has_db in (True, False):
             sh = _verifier("demo-task", has_db=has_db)
-            self.assertIn("MODE=\"ua\"", sh)
+            self.assertIn('MODE="ua"', sh)
             self.assertIn("run_eval.py", sh)
             self.assertNotIn("external_agent_no_container_artifact", sh)
             self.assertNotIn("Host-side (EXTERNAL)", sh)
             # Oracle branch remains for .oracle-ready only.
-            self.assertIn("MODE=\"oracle\"", sh)
+            self.assertIn('MODE="oracle"', sh)
             self.assertIn(".oracle-ready", sh)
+            self.assertNotIn("18000", sh)
 
     def test_compose_does_not_publish_gateway_host_port(self) -> None:
-        yml = _compose("demo-task", has_db=True, has_workspace=True, has_mock=False)
-        self.assertNotIn("18000", yml)
-        self.assertNotIn("127.0.0.1:18000", yml)
+        for has_db in (True, False):
+            yml = _compose(
+                "demo-task", has_db=has_db, has_workspace=True, has_mock=False
+            )
+            self.assertNotIn("18000", yml)
+            self.assertNotIn("127.0.0.1:18000", yml)
 
     def test_verifier_handoff_and_grader_publish(self) -> None:
-        """Verify verifier script contains handoff logic and syntax check passes."""
-        sh = _verifier("demo-task", has_db=True)
-        self.assertIn('"$HANDOFF_DIR/reward.txt"', sh)
-        self.assertIn('COMPLETION="$HANDOFF_DIR/completion.json"', sh)
-        self.assertIn("evaluator.stdout.log", sh)
-        self.assertIn("evaluator.stderr.log", sh)
-        self.assertIn("COWORK_GRADER", sh)
-        self.assertIn("accepted grader sidecar reward", sh)
-        self.assertIn("grader evaluator failed", sh)
+        """Both categories use grader handoff; syntax check passes."""
+        for has_db in (True, False):
+            sh = _verifier("demo-task", has_db=has_db)
+            self.assertIn('"$HANDOFF_DIR/reward.txt"', sh)
+            self.assertIn('COMPLETION="$HANDOFF_DIR/completion.json"', sh)
+            self.assertIn("evaluator.stdout.log", sh)
+            self.assertIn("evaluator.stderr.log", sh)
+            self.assertIn("COWORK_GRADER", sh)
+            self.assertIn("accepted grader sidecar reward", sh)
+            self.assertIn("grader evaluator failed", sh)
+            self.assertIn("HANDOFF_DIR=/grader_out", sh)
+            # Direct in-main evaluation path removed.
+            self.assertNotIn("accepted evaluator reward=", sh)
 
-        main = sh.split(
-            "# Shared main has no PG env or DB network; it only consumes handoff.", 1
-        )[1]
-        self.assertIn("evaluation/main.py", sh)
-        self.assertNotIn("evaluation/main.py", main)
-        self.assertIn("completion marker is missing", main)
+            main = sh.split(
+                "# Shared main has no PG env or DB network; it only consumes handoff.",
+                1,
+            )[1]
+            self.assertIn("evaluation/main.py", sh)
+            self.assertNotIn("evaluation/main.py", main)
+            self.assertIn("completion marker is missing", main)
 
-        with tempfile.NamedTemporaryFile("w", suffix=".sh") as script:
-            script.write(sh)
-            script.flush()
-            result = subprocess.run(
-                ["bash", "-n", script.name],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_file_only_verifier_keeps_direct_evaluation(self) -> None:
-        """Verify file-only verifier executes direct evaluation in main."""
-        sh = _verifier("demo-task", has_db=False)
-        self.assertIn("evaluation/main.py", sh)
-        self.assertNotIn("/grader_out/completion.json", sh)
-        with tempfile.NamedTemporaryFile("w", suffix=".sh") as script:
-            script.write(sh)
-            script.flush()
-            result = subprocess.run(
-                ["bash", "-n", script.name],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        self.assertEqual(result.returncode, 0, result.stderr)
+            with tempfile.NamedTemporaryFile("w", suffix=".sh") as script:
+                script.write(sh)
+                script.flush()
+                result = subprocess.run(
+                    ["bash", "-n", script.name],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class CompletionContractClassifierTests(unittest.TestCase):

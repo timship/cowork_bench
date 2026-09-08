@@ -204,39 +204,38 @@ def validate_task(task_dir: Path, *, skip_docker: bool = False) -> list[str]:
 
     _ = meta
 
-    # Grader sidecar isolation for DB tasks.
+    # Grader sidecar isolation for all canonical tasks (DB and non-DB).
     compose = task_dir / "environment" / "docker-compose.yaml"
     if compose.is_file():
         cy = compose.read_text(encoding="utf-8", errors="ignore")
-        has_postgres = "\n  postgres:" in cy or "\n  postgres:\n" in cy
-        if has_postgres:
-            if "\n  grader:" not in cy and "\ngrader:" not in cy:
-                errs.append("DB task missing grader sidecar")
-            if "grader_out:/grader_out:ro" not in cy:
-                errs.append("main must mount grader_out read-only")
-            toml = (task_dir / "task.toml").read_text(encoding="utf-8", errors="ignore")
-            if 'service = "grader"' not in toml:
-                errs.append("task.toml missing verifier.collect for grader")
-            # Finalize must run on grader (where /tests is mounted), not main.
-            if (
-                "workspace_lifecycle.py finalize" in toml
-                and 'service = "main"' in toml
-            ):
-                # Split collects: reject finalize bound to main when postgres present.
-                _assert_finalize_not_on_main(toml, errs)
+        if "\n  grader:" not in cy and "\ngrader:" not in cy:
+            errs.append("task missing grader sidecar")
+        if "grader_out:/grader_out:ro" not in cy:
+            errs.append("main must mount grader_out read-only")
+        if "HOST_AGENT_LOGS_PATH" not in cy or "/logs/agent:ro" not in cy:
+            errs.append("grader must mount HOST_AGENT_LOGS_PATH read-only at /logs/agent")
+        # /tests must not be mounted onto main (Harbor may upload there; compose must not).
+        main_block = cy.split("\n  grader:")[0] if "\n  grader:" in cy else cy
+        if "../tests:/tests" in main_block:
+            errs.append("main must not mount /tests")
+        toml = (task_dir / "task.toml").read_text(encoding="utf-8", errors="ignore")
+        if 'service = "grader"' not in toml:
+            errs.append("task.toml missing verifier.collect for grader")
+        if "workspace_lifecycle.py finalize" in toml:
+            _assert_finalize_not_on_main(toml, errs)
     return errs
 
 
 def _assert_finalize_not_on_main(toml: str, errs: list[str]) -> None:
-    """Ensure finalize collect is not attached to main for DB tasks."""
+    """Ensure finalize collect is attached to grader, never main."""
     blocks = toml.split("[[verifier.collect]]")
     for block in blocks[1:]:
         if "workspace_lifecycle.py finalize" not in block:
             continue
         if 'service = "main"' in block:
-            errs.append("finalize collect must use service=grader on DB tasks")
+            errs.append("finalize collect must use service=grader")
         if 'service = "grader"' not in block:
-            errs.append("finalize collect missing service=grader on DB tasks")
+            errs.append("finalize collect missing service=grader")
 
 
 def main() -> int:

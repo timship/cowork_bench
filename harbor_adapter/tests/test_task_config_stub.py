@@ -91,12 +91,11 @@ class TaskConfigStubTests(unittest.TestCase):
         self.assertEqual("failed", TASK_STATUS_FAILED)
 
     def test_prepare_workspace_module_builds_compatible_stub(self) -> None:
-        prep_dir = ROOT / "harbor_adapter" / "native_mcp" / "prep"
-        sys.path.insert(0, str(prep_dir))
-        try:
-            from task_config_stub import minimal_harbor_task_config_dict as prep_stub
-        finally:
-            sys.path.pop(0)
+        # Source stub lives next to prep; convert_one copies it into task prep/.
+        from native_mcp.task_config_stub import (
+            minimal_harbor_task_config_dict as prep_stub,
+        )
+
         cfg = prep_stub("t", "/ws", "/log")
         TaskConfig.from_dict(dict(cfg))
 
@@ -135,9 +134,40 @@ class GeneratedPackagingSmokeTests(unittest.TestCase):
                 out / task / "environment" / "docker-compose.yaml"
             ).read_text(encoding="utf-8")
             self.assertNotIn("18000", compose)
+            self.assertIn("HOST_AGENT_LOGS_PATH", compose)
+            self.assertIn("/logs/agent:ro", compose)
             pg = out / task / "environment" / "pg.env"
             self.assertTrue(pg.is_file())
             self.assertEqual(pg.stat().st_size, 0)
+
+    def test_convert_one_non_db_finalize_on_grader(self) -> None:
+        from generate_harbor_canonical import convert_one
+        from native_mcp.catalog import load_catalog
+
+        catalog = load_catalog()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            task = "kulinar-terminal-menu-generator"
+            convert_one(task, out, catalog)
+            toml = (out / task / "task.toml").read_text(encoding="utf-8")
+            blocks = toml.split("[[verifier.collect]]")
+            fin = [b for b in blocks[1:] if "workspace_lifecycle.py finalize" in b]
+            self.assertEqual(len(fin), 1)
+            self.assertIn('service = "grader"', fin[0])
+            self.assertNotIn('service = "main"', fin[0])
+            compose = (
+                out / task / "environment" / "docker-compose.yaml"
+            ).read_text(encoding="utf-8")
+            self.assertIn("grader:", compose)
+            self.assertIn("HOST_AGENT_LOGS_PATH", compose)
+            self.assertIn("/logs/agent:ro", compose)
+            self.assertIn("- grader_net", compose)
+            main = compose.split("\n  grader:")[0]
+            self.assertNotIn("../tests:/tests", main)
+            self.assertNotIn("18000", compose)
+            sh = (out / task / "tests" / "test.sh").read_text(encoding="utf-8")
+            self.assertIn("HANDOFF_DIR=/grader_out", sh)
+            self.assertNotIn("Host-side (EXTERNAL)", sh)
 
 
 if __name__ == "__main__":

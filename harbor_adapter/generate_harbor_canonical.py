@@ -232,33 +232,23 @@ def _task_toml(task: str, servers: list[dict], *, has_db: bool) -> str:
         "PYTHONPATH=/tests/verifier:/workspace /opt/venv/bin/python3 "
         "/tests/verifier/workspace_lifecycle.py finalize"
     )
-    if has_db:
-        # /tests is mounted on grader only; finalize must run there before test.sh.
-        body += textwrap.dedent(
-            f"""
+    # /tests and agent-log RO bind live on grader only; finalize before test.sh.
+    # has_db is retained for call-site compatibility; collect target is always grader.
+    _ = has_db
+    body += textwrap.dedent(
+        f"""
 
-            [[verifier.collect]]
-            service = "grader"
-            command = "{finalize_cmd}"
-            timeout_sec = 60.0
+        [[verifier.collect]]
+        service = "grader"
+        command = "{finalize_cmd}"
+        timeout_sec = 60.0
 
-            [[verifier.collect]]
-            service = "grader"
-            command = "bash /tests/test.sh"
-            timeout_sec = 900.0
-            """
-        )
-    else:
-        # No grader sidecar — Harbor uploads /tests onto the verifier (main).
-        body += textwrap.dedent(
-            f"""
-
-            [[verifier.collect]]
-            service = "main"
-            command = "{finalize_cmd}"
-            timeout_sec = 60.0
-            """
-        )
+        [[verifier.collect]]
+        service = "grader"
+        command = "bash /tests/test.sh"
+        timeout_sec = 900.0
+        """
+    )
     return body
 
 
@@ -432,22 +422,51 @@ def _compose(
         )
     public_depends_s = "\n".join(public_depends)
 
+    # Harbor mounts trial agent/artifacts binds onto main only
+    # (write_mounts_compose_file → services.main.volumes). Grader gets the same
+    # host agent dir via Harbor's legacy HOST_AGENT_LOGS_PATH compose env
+    # (legacy_log_mount_env_vars), read-only for completion inference.
+    grader_main_vols = (
+        "      - cowork_artifacts:/logs/artifacts/cowork\n"
+        "      - grader_out:/grader_out:ro\n"
+    )
     if has_db:
-        grader_main_vols = (
-            "      - cowork_artifacts:/logs/artifacts/cowork\n"
-            "      - grader_out:/grader_out:ro\n"
+        grader_networks = "      - db_net\n"
+        grader_env_file = "    env_file:\n      - ./pg.env\n"
+        grader_pg_env = (
+            '      PGHOST: postgres\n'
+            '      PG_HOST: postgres\n'
+            '      PGPORT: "5432"\n'
+            '      PG_PORT: "5432"\n'
         )
-        grader_service = f"""
-  # Harbor verifier-phase grader: db_net only (agent/main cannot reach it).
-  # Collect hook runs tests/test.sh here; main only reads /grader_out:ro.
+        grader_depends = (
+            "    depends_on:\n"
+            "      postgres:\n"
+            "        condition: service_healthy\n"
+            "      workspace-prep:\n"
+            "        condition: service_completed_successfully\n"
+        )
+        grader_net_comment = "db_net only (agent/main cannot reach it)."
+    else:
+        grader_networks = "      - grader_net\n"
+        grader_env_file = ""
+        grader_pg_env = ""
+        grader_depends = (
+            "    depends_on:\n"
+            "      workspace-prep:\n"
+            "        condition: service_completed_successfully\n"
+        )
+        grader_net_comment = "grader_net only (not on agent_net)."
+
+    grader_service = f"""
+  # Harbor verifier-phase grader: {grader_net_comment}
+  # Collect runs finalize + tests/test.sh here; /tests stays off main.
+  # HOST_AGENT_LOGS_PATH is injected by Harbor 0.22 for the trial agent bind.
   grader:
     image: "{MAIN_IMAGE}"
     working_dir: /workspace
     networks:
-      - db_net
-    env_file:
-      - ./pg.env
-    environment:
+{grader_networks}{grader_env_file}    environment:
       COWORK_TASK: "{task}"
       COWORK_SHARED_WORKSPACE: "{SHARED_WS}"
       COWORK_GRADER: "1"
@@ -455,29 +474,17 @@ def _compose(
       PYTHON_BIN: /opt/venv/bin/python3
       UV_NO_SYNC: "1"
       HOME: /tmp/cowork-home
-      PGHOST: postgres
-      PG_HOST: postgres
-      PGPORT: "5432"
-      PG_PORT: "5432"
-    volumes:
+{grader_pg_env}    volumes:
       - cowork_workspace:{SHARED_WS}
       - cowork_artifacts:/logs/artifacts/cowork
       - grader_out:/grader_out
       - ../tests:/tests:ro
+      - ${{HOST_AGENT_LOGS_PATH:-/tmp/cowork-harbor-unset-agent-logs}}:/logs/agent:ro
     command:
       - sleep
       - infinity
-    depends_on:
-      postgres:
-        condition: service_healthy
-      workspace-prep:
-        condition: service_completed_successfully
-"""
-        volumes_extra = "  cowork_artifacts:\n  grader_out:\n"
-    else:
-        grader_main_vols = ""
-        grader_service = ""
-        volumes_extra = ""
+{grader_depends}"""
+    volumes_extra = "  cowork_artifacts:\n  grader_out:\n"
 
     return f"""# Agent sees ONLY mcp-gateway-public (task.toml).
 # mcp-gateway-db: db_net + mcp_internal — DB MCP (not on agent_net).
@@ -489,6 +496,7 @@ networks:
   db_net: {{}}
   mcp_internal: {{}}
   mcp_workspace_net: {{}}
+  grader_net: {{}}
 
 services:
   main:
@@ -744,10 +752,14 @@ print(
 
 
 def _verifier(task: str, *, has_db: bool) -> str:
-    """Generate the verifier script with robust completion contract for DB sidecar or direct execution."""
-    if has_db:
-        return textwrap.dedent(
-            f"""\
+    """Generate verifier script: grader evaluates; main only consumes handoff.
+
+    ``has_db`` is kept for call-site compatibility; both categories use the
+    isolated grader + ``/grader_out`` handoff contract.
+    """
+    _ = has_db
+    return textwrap.dedent(
+        f"""\
             #!/bin/bash
             set -uo pipefail
 
@@ -764,7 +776,7 @@ def _verifier(task: str, *, has_db: bool) -> str:
             RESULT_JSON=/logs/verifier/oracle-result.json
             EVAL_RES=""
 
-            # Harbor runs this branch in the DB-connected grader container.
+            # Harbor runs this branch in the isolated grader container.
             if [ -n "${{COWORK_GRADER:-}}" ]; then
               mkdir -p "$HANDOFF_DIR"
               rm -f "$REWARD_FILE" "$COMPLETION" "$COMPLETION.tmp"
@@ -874,112 +886,6 @@ PY
             echo "accepted grader sidecar reward=$HANDOFF_REWARD"
             exit 0
             """
-        )
-
-    return textwrap.dedent(
-        f"""\
-        #!/bin/bash
-        set -uo pipefail
-
-        TASK={task!r}
-        ROOT=/workspace/tasks/finalpool/$TASK
-        mkdir -p /logs/verifier "$ROOT"
-
-        # Lifecycle helpers arrive with Harbor's /tests upload (verifier phase only).
-        if [ -f /tests/verifier/workspace_lifecycle.py ] && [ -f {SHARED_WS}/.cowork/cli_context.json ]; then
-          PYTHONPATH=/tests/verifier:/workspace /opt/venv/bin/python3 /tests/verifier/workspace_lifecycle.py finalize \\
-            || true
-        fi
-
-        COMPLETION=/logs/verifier/completion.json
-        REWARD_FILE=/logs/verifier/reward.txt
-        EVAL_LOG=/logs/verifier/cowork-eval.log
-        EVAL_STDOUT=/logs/verifier/evaluator.stdout.log
-        EVAL_STDERR=/logs/verifier/evaluator.stderr.log
-        RESULT_JSON=/logs/verifier/oracle-result.json
-        EVAL_RES=""
-
-        rm -f "$REWARD_FILE" "$COMPLETION" "$COMPLETION.tmp"
-        rm -f "$EVAL_LOG" "$EVAL_STDOUT" "$EVAL_STDERR" "$RESULT_JSON"
-        rm -rf "$ROOT/evaluation" "$ROOT/groundtruth_workspace" "$ROOT/groundtruth_workspace_cn"
-        if [ -d /tests/evaluation ]; then
-          cp -a /tests/evaluation "$ROOT/evaluation"
-        fi
-        if [ -d /tests/groundtruth_workspace ]; then
-          cp -a /tests/groundtruth_workspace "$ROOT/groundtruth_workspace"
-        fi
-        if [ -d /tests/groundtruth_workspace_cn ]; then
-          cp -a /tests/groundtruth_workspace_cn "$ROOT/groundtruth_workspace_cn"
-        fi
-
-        ORACLE_WORKSPACE=/logs/artifacts/cowork/oracle_workspace
-        if [ -f "$ORACLE_WORKSPACE/.oracle-ready" ]; then
-          MODE="oracle"
-          set +e
-          PYTHONPATH=/workspace /opt/venv/bin/python3 -u "$ROOT/evaluation/main.py" \\
-            --agent_workspace "$ORACLE_WORKSPACE" \\
-            --groundtruth_workspace "$ROOT/groundtruth_workspace" \\
-            --res_log_file "$RESULT_JSON" \\
-            >"$EVAL_STDOUT" 2>"$EVAL_STDERR"
-          EVAL_RC=$?
-          set -e
-        else
-          MODE="ua"
-          LOG=$(/opt/venv/bin/python3 -c "import glob; p=sorted(glob.glob('/logs/artifacts/cowork/**/traj_log.json',recursive=True)); print(p[0] if p else '')")
-          if [ -z "$LOG" ]; then
-            printf '%s\n' "Cowork traj_log.json not found" >"$EVAL_STDERR"
-            : >"$EVAL_STDOUT"
-            EVAL_RC=2
-          else
-            EVAL_RES="$(dirname "$LOG")/eval_res.json"
-            set +e
-            PYTHONPATH=/workspace /opt/venv/bin/python3 -u /workspace/scripts/run_eval.py \\
-              --log_file "$LOG" >"$EVAL_STDOUT" 2>"$EVAL_STDERR"
-            EVAL_RC=$?
-            set -e
-          fi
-        fi
-
-        cat "$EVAL_STDOUT" "$EVAL_STDERR" >"$EVAL_LOG" 2>/dev/null || true
-
-        # Robust completion classification and atomic marker creation
-        /opt/venv/bin/python3 - "$MODE" "$EVAL_RC" "$EVAL_STDOUT" "$EVAL_STDERR" "$RESULT_JSON" "$EVAL_RES" "$COMPLETION" "$REWARD_FILE" <<'PY'
-{_CLASSIFIER_PYTHON_SCRIPT.strip()}
-PY
-
-        HANDOFF=$(/opt/venv/bin/python3 - "$COMPLETION" <<'PY'
-import sys, json
-try:
-    with open(sys.argv[1], encoding="utf-8") as handle:
-        item = json.load(handle)
-    status = item.get("status")
-    reward = item.get("reward")
-    tech_status = item.get("technical_status", "unknown")
-    err_type = item.get("error_type") or "none"
-    err_msg = item.get("error_message") or ""
-    if status not in ("succeeded", "failed"):
-        raise ValueError("invalid status")
-    print(status, reward if reward is not None else "none", tech_status, err_type, err_msg)
-except Exception:
-    sys.exit(2)
-PY
-        ) || {{
-          echo "evaluator completion marker is invalid" >&2
-          exit 2
-        }}
-
-        read -r HANDOFF_STATUS HANDOFF_REWARD HANDOFF_TECH HANDOFF_ERR_TYPE HANDOFF_ERR_MSG <<<"$HANDOFF"
-
-        if [ "$HANDOFF_STATUS" = "failed" ] || [ "$HANDOFF_TECH" = "error" ]; then
-          echo "evaluator failed: error_type=$HANDOFF_ERR_TYPE message=$HANDOFF_ERR_MSG" >&2
-          echo 0 > /logs/verifier/reward.txt
-          exit 2
-        fi
-
-        printf '%s\n' "$HANDOFF_REWARD" > /logs/verifier/reward.txt
-        echo "accepted evaluator reward=$HANDOFF_REWARD"
-        exit 0
-        """
     )
 
 
