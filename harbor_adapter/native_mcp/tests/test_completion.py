@@ -168,9 +168,10 @@ class FinalizeContractTests(unittest.TestCase):
             agent_dir=agent,
             context_path=ws / ".cowork" / "cli_context.json",
         )
-        self.assertEqual(result["status"], "FAILED")
+        self.assertEqual(result["status"], "failed")
         dumped = json.loads(log.read_text(encoding="utf-8"))
-        self.assertEqual(dumped["status"], "FAILED")
+        self.assertEqual(dumped["status"], "failed")
+        self.assertNotEqual(dumped["status"], "success")
         self.assertNotEqual(dumped["status"], "SUCCESS")
 
     def test_finalize_writes_success_only_when_inferred(self) -> None:
@@ -188,10 +189,130 @@ class FinalizeContractTests(unittest.TestCase):
             agent_dir=agent,
             context_path=ws / ".cowork" / "cli_context.json",
         )
-        self.assertEqual(result["status"], "SUCCESS")
+        self.assertEqual(result["status"], "success")
         dumped = json.loads(log.read_text(encoding="utf-8"))
-        self.assertEqual(dumped["status"], "SUCCESS")
+        self.assertEqual(dumped["status"], "success")
         self.assertIn("completion", dumped)
+        self.assertIn("evaluation", dumped["config"])
+        self.assertEqual(dumped["config"]["task_str"], "")
+
+    def test_cowork_status_lowercase_matches_task_status(self) -> None:
+        from native_mcp.completion import CompletionInference
+
+        ok = CompletionInference(confirmed=True, status="SUCCESS", reason="x")
+        bad = CompletionInference(confirmed=False, status="FAILED", reason="y")
+        self.assertEqual(ok.cowork_status, "success")
+        self.assertEqual(bad.cowork_status, "failed")
+
+    def test_missing_agent_artifact_finalize_is_fail_closed(self) -> None:
+        ws = Path(tempfile.mkdtemp(prefix="cowork-miss-"))
+        log = ws / "traj_log.json"
+        _ctx(ws, log)
+        result = finalize(
+            status=None,
+            workspace=ws,
+            agent_dir=Path("/tmp/cowork-no-such-agent-dir-finalize"),
+            context_path=ws / ".cowork" / "cli_context.json",
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertNotEqual(result["status"], "success")
+
+    def test_corrupt_context_json_is_not_success(self) -> None:
+        ws = Path(tempfile.mkdtemp(prefix="cowork-badjson-"))
+        ctx = ws / ".cowork"
+        ctx.mkdir(parents=True)
+        (ctx / "cli_context.json").write_text("{not-json", encoding="utf-8")
+        agent = _agent_dir()
+        (agent / "openhands.trajectory.json").write_text(
+            json.dumps({"history": [{"action": "finish"}]}),
+            encoding="utf-8",
+        )
+        with self.assertRaises(SystemExit) as raised:
+            finalize(
+                status=None,
+                workspace=ws,
+                agent_dir=agent,
+                context_path=ctx / "cli_context.json",
+            )
+        self.assertIn("corrupt", str(raised.exception).lower())
+
+    def test_finalize_upgrades_legacy_minimal_config(self) -> None:
+        ws = Path(tempfile.mkdtemp(prefix="cowork-upg-"))
+        log = ws / "traj_log.json"
+        _ctx(ws, log)  # minimal task_config without evaluation
+        agent = _agent_dir()
+        (agent / "openhands.trajectory.json").write_text(
+            json.dumps({"history": [{"action": "finish"}]}),
+            encoding="utf-8",
+        )
+        finalize(
+            status=None,
+            workspace=ws,
+            agent_dir=agent,
+            context_path=ws / ".cowork" / "cli_context.json",
+        )
+        dumped = json.loads(log.read_text(encoding="utf-8"))
+        cfg = dumped["config"]
+        self.assertIn("evaluation", cfg)
+        self.assertEqual(cfg["evaluation"]["groundtruth_workspace"], None)
+        self.assertEqual(cfg["evaluation"]["evaluation_command"], None)
+        self.assertEqual(cfg["task_str"], "")
+        self.assertIn("system_prompts", cfg)
+        self.assertIn("initialization", cfg)
+        self.assertIn("stop", cfg)
+
+    def test_finalize_preserves_full_config_fields(self) -> None:
+        ws = Path(tempfile.mkdtemp(prefix="cowork-full-"))
+        log = ws / "traj_log.json"
+        ctx = ws / ".cowork"
+        ctx.mkdir(parents=True)
+        full = {
+            "id": "demo",
+            "task_dir": "demo",
+            "agent_workspace": str(ws),
+            "log_file": str(log),
+            "single_turn_mode": True,
+            "cn_mode": False,
+            "task_str": "keep-me",
+            "evaluation": {
+                "groundtruth_workspace": "/custom/gt",
+                "evaluation_command": "python3 -m custom.eval",
+            },
+            "system_prompts": {"agent": "A", "user": "U"},
+            "initialization": {"workspace": "/init", "process_command": "prep"},
+            "stop": {"user_phrases": ["STOP"], "tool_names": ["done"]},
+            "meta": {"x": 1},
+        }
+        (ctx / "cli_context.json").write_text(
+            json.dumps(
+                {
+                    "task": "demo",
+                    "log_file": str(log),
+                    "task_config": full,
+                    "start_time": "t0",
+                }
+            ),
+            encoding="utf-8",
+        )
+        agent = _agent_dir()
+        (agent / "openhands.trajectory.json").write_text(
+            json.dumps({"history": [{"action": "finish"}]}),
+            encoding="utf-8",
+        )
+        finalize(
+            status=None,
+            workspace=ws,
+            agent_dir=agent,
+            context_path=ctx / "cli_context.json",
+        )
+        dumped = json.loads(log.read_text(encoding="utf-8"))
+        self.assertEqual(dumped["config"]["task_str"], "keep-me")
+        self.assertEqual(
+            dumped["config"]["evaluation"]["evaluation_command"],
+            "python3 -m custom.eval",
+        )
+        self.assertEqual(dumped["config"]["system_prompts"]["agent"], "A")
+        self.assertEqual(dumped["config"]["meta"], {"x": 1})
 
 
 if __name__ == "__main__":

@@ -47,12 +47,40 @@ class GraderIsolationTests(unittest.TestCase):
         self.assertNotIn("grader_out", yml)
 
     def test_task_toml_collects_grader_for_db(self) -> None:
-        """Verify task.toml includes verifier.collect for grader on DB tasks only."""
+        """DB tasks: finalize + test.sh on grader; no finalize on main."""
         toml = _task_toml("demo-task", [{"name": "emails"}], has_db=True)
         self.assertIn('service = "grader"', toml)
         self.assertIn("bash /tests/test.sh", toml)
+        self.assertIn("workspace_lifecycle.py finalize", toml)
+        # Finalize collect must not be bound to main when grader exists.
+        blocks = toml.split("[[verifier.collect]]")
+        finalize_blocks = [
+            b for b in blocks[1:] if "workspace_lifecycle.py finalize" in b
+        ]
+        self.assertEqual(len(finalize_blocks), 1)
+        self.assertIn('service = "grader"', finalize_blocks[0])
+        self.assertNotIn('service = "main"', finalize_blocks[0])
         toml2 = _task_toml("demo-task", [{"name": "excel"}], has_db=False)
         self.assertNotIn('service = "grader"', toml2)
+        self.assertIn('service = "main"', toml2)
+        self.assertIn("workspace_lifecycle.py finalize", toml2)
+
+    def test_ua_verifier_keeps_run_eval_not_external_oracle(self) -> None:
+        """In-container UA path must stay on run_eval (no EXTERNAL MODE=oracle)."""
+        for has_db in (True, False):
+            sh = _verifier("demo-task", has_db=has_db)
+            self.assertIn("MODE=\"ua\"", sh)
+            self.assertIn("run_eval.py", sh)
+            self.assertNotIn("external_agent_no_container_artifact", sh)
+            self.assertNotIn("Host-side (EXTERNAL)", sh)
+            # Oracle branch remains for .oracle-ready only.
+            self.assertIn("MODE=\"oracle\"", sh)
+            self.assertIn(".oracle-ready", sh)
+
+    def test_compose_does_not_publish_gateway_host_port(self) -> None:
+        yml = _compose("demo-task", has_db=True, has_workspace=True, has_mock=False)
+        self.assertNotIn("18000", yml)
+        self.assertNotIn("127.0.0.1:18000", yml)
 
     def test_verifier_handoff_and_grader_publish(self) -> None:
         """Verify verifier script contains handoff logic and syntax check passes."""

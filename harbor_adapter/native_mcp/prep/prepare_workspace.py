@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from db_rewrite import rewrite_preprocess_db_connections, unresolved_connection_literals
+from task_config_stub import minimal_harbor_task_config_dict
 
 SHARED = Path("/workspace/cowork_shared")
 CONTEXT = SHARED / ".cowork" / "cli_context.json"
@@ -86,13 +87,12 @@ def main() -> None:
         "model": "n/a",
         "workspace": str(SHARED),
         "log_file": str(TRAJ_LOG),
-        "task_config": {
-            "id": args.task,
-            "task_dir": args.task,
-            "agent_workspace": str(SHARED),
-            "log_file": str(TRAJ_LOG),
-            "single_turn_mode": True,
-        },
+        "task_config": minimal_harbor_task_config_dict(
+            args.task,
+            str(SHARED),
+            str(TRAJ_LOG),
+            single_turn_mode=True,
+        ),
         "start_time": datetime.now().isoformat(),
     }
     CONTEXT.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

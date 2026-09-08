@@ -74,7 +74,7 @@ def _validate_pg_env(compose: str, env_path: Path) -> list[str]:
     return []
 
 
-def validate_task(task_dir: Path) -> list[str]:
+def validate_task(task_dir: Path, *, skip_docker: bool = False) -> list[str]:
     errs: list[str] = []
     tid = task_dir.name
     required = [
@@ -84,8 +84,10 @@ def validate_task(task_dir: Path) -> list[str]:
         "environment/mcp_manifest_public.json",
         "environment/mcp_runtime/mcp_gateway.py",
         "environment/prep/prepare_workspace.py",
+        "environment/prep/task_config_stub.py",
         "tests/test.sh",
         "tests/verifier/workspace_lifecycle.py",
+        "tests/verifier/task_config_stub.py",
         "metadata.json",
     ]
     for rel in required:
@@ -182,20 +184,23 @@ def validate_task(task_dir: Path) -> list[str]:
         env_dir = task_dir / "environment"
         pg_env = env_dir / "pg.env"
         errs.extend(_validate_pg_env(compose, pg_env))
-        try:
-            subprocess.run(
-                ["docker", "compose", "-f", str(compose_path), "config", "-q"],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-        except FileNotFoundError:
-            errs.append("docker not available for compose config")
-        except subprocess.CalledProcessError as exc:
-            errs.append(f"compose config failed: {(exc.stderr or exc.stdout or '')[:300]}")
-        except Exception as exc:
-            errs.append(f"compose config error: {exc}")
+        if not skip_docker:
+            try:
+                subprocess.run(
+                    ["docker", "compose", "-f", str(compose_path), "config", "-q"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            except FileNotFoundError:
+                errs.append("docker not available for compose config")
+            except subprocess.CalledProcessError as exc:
+                errs.append(
+                    f"compose config failed: {(exc.stderr or exc.stdout or '')[:300]}"
+                )
+            except Exception as exc:
+                errs.append(f"compose config error: {exc}")
 
     _ = meta
 
@@ -212,17 +217,51 @@ def validate_task(task_dir: Path) -> list[str]:
             toml = (task_dir / "task.toml").read_text(encoding="utf-8", errors="ignore")
             if 'service = "grader"' not in toml:
                 errs.append("task.toml missing verifier.collect for grader")
+            # Finalize must run on grader (where /tests is mounted), not main.
+            if (
+                "workspace_lifecycle.py finalize" in toml
+                and 'service = "main"' in toml
+            ):
+                # Split collects: reject finalize bound to main when postgres present.
+                _assert_finalize_not_on_main(toml, errs)
     return errs
 
 
+def _assert_finalize_not_on_main(toml: str, errs: list[str]) -> None:
+    """Ensure finalize collect is not attached to main for DB tasks."""
+    blocks = toml.split("[[verifier.collect]]")
+    for block in blocks[1:]:
+        if "workspace_lifecycle.py finalize" not in block:
+            continue
+        if 'service = "main"' in block:
+            errs.append("finalize collect must use service=grader on DB tasks")
+        if 'service = "grader"' not in block:
+            errs.append("finalize collect missing service=grader on DB tasks")
+
+
 def main() -> int:
-    root = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "root",
+        nargs="?",
+        default=".",
+        help="Generated dataset root (default: cwd)",
+    )
+    parser.add_argument(
+        "--skip-docker",
+        action="store_true",
+        help="Skip `docker compose config` checks (static-only validation).",
+    )
+    args = parser.parse_args()
+    root = Path(args.root)
     tasks = sorted(
         p for p in root.iterdir() if p.is_dir() and (p / "task.toml").exists()
     )
     all_errs: dict[str, list[str]] = {}
     for t in tasks:
-        e = validate_task(t)
+        e = validate_task(t, skip_docker=args.skip_docker)
         if e:
             all_errs[t.name] = e
             print(f"FAIL {t.name}: {e}")
@@ -240,6 +279,7 @@ def main() -> int:
         "expected_no_gt": sorted(EXPECTED_NO_GT),
         "expected_empty_gt": sorted(EXPECTED_EMPTY_GT),
         "no_gt_match_expected": set(no_gt) == EXPECTED_NO_ORACLE,
+        "skip_docker": bool(args.skip_docker),
         "failures": all_errs,
     }
     out = root / "STATIC_VALIDATION.json"

@@ -194,11 +194,6 @@ def _task_toml(task: str, servers: list[dict], *, has_db: bool) -> str:
             timeout_sec = 900.0
             environment_mode = "shared"
 
-            [[verifier.collect]]
-            service = "main"
-            command = "PYTHONPATH=/tests/verifier:/workspace /opt/venv/bin/python3 /tests/verifier/workspace_lifecycle.py finalize"
-            timeout_sec = 60.0
-
             [agent]
             timeout_sec = 7200.0
 
@@ -233,15 +228,35 @@ def _task_toml(task: str, servers: list[dict], *, has_db: bool) -> str:
         )
     blocks.append("\n\n[verifier.env]\n\n[solution.env]\n")
     body = "\n".join(blocks)
+    finalize_cmd = (
+        "PYTHONPATH=/tests/verifier:/workspace /opt/venv/bin/python3 "
+        "/tests/verifier/workspace_lifecycle.py finalize"
+    )
     if has_db:
-        # Harbor-official sidecar collect: grade on db_net; main never gets PG.
+        # /tests is mounted on grader only; finalize must run there before test.sh.
         body += textwrap.dedent(
-            """
+            f"""
+
+            [[verifier.collect]]
+            service = "grader"
+            command = "{finalize_cmd}"
+            timeout_sec = 60.0
 
             [[verifier.collect]]
             service = "grader"
             command = "bash /tests/test.sh"
             timeout_sec = 900.0
+            """
+        )
+    else:
+        # No grader sidecar — Harbor uploads /tests onto the verifier (main).
+        body += textwrap.dedent(
+            f"""
+
+            [[verifier.collect]]
+            service = "main"
+            command = "{finalize_cmd}"
+            timeout_sec = 60.0
             """
         )
     return body
@@ -1230,6 +1245,10 @@ def convert_one(task: str, output_root: Path, catalog: dict) -> dict:
     )
     shutil.copy2(PREP_SRC, env_dir / "prep" / "prepare_workspace.py")
     shutil.copy2(PREP_SRC.parent / "db_rewrite.py", env_dir / "prep" / "db_rewrite.py")
+    shutil.copy2(
+        NATIVE_DIR / "task_config_stub.py",
+        env_dir / "prep" / "task_config_stub.py",
+    )
     for name in ("__init__.py", "catalog.py", "mcp_gateway.py"):
         shutil.copy2(NATIVE_DIR / name, env_dir / "mcp_runtime" / name)
 
@@ -1250,7 +1269,7 @@ def convert_one(task: str, output_root: Path, catalog: dict) -> dict:
                 target / "tests" / dirname,
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
             )
-    for name in ("workspace_lifecycle.py", "completion.py"):
+    for name in ("workspace_lifecycle.py", "completion.py", "task_config_stub.py"):
         shutil.copy2(NATIVE_DIR / name, target / "tests" / "verifier" / name)
 
     _copy_payload(source, env_dir / "task_payload")

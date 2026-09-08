@@ -55,14 +55,15 @@ TURN_FINISHED_REL = Path(".cowork") / "TURN_FINISHED"
 @dataclass
 class CompletionInference:
     confirmed: bool
-    status: str  # SUCCESS | FAILED
+    status: str  # SUCCESS | FAILED (inference labels; traj uses cowork_status)
     reason: str
     framework: str | None = None
     evidence: list[str] = field(default_factory=list)
 
     @property
     def cowork_status(self) -> str:
-        return "SUCCESS" if self.confirmed else "FAILED"
+        # Must match TaskStatus.SUCCESS.value / FAILED.value for run_eval.
+        return "success" if self.confirmed else "failed"
 
 
 def infer_completion(

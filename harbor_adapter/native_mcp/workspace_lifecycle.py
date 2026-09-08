@@ -19,6 +19,10 @@ _DIR = Path(__file__).resolve().parent
 if str(_DIR) not in sys.path:
     sys.path.insert(0, str(_DIR))
 from completion import CompletionInference, infer_completion  # noqa: E402
+from task_config_stub import (  # noqa: E402
+    needs_eval_upgrade,
+    upgrade_task_config_for_eval,
+)
 
 SHARED_WORKSPACE = Path("/workspace/cowork_shared")
 CONTEXT_PATH = SHARED_WORKSPACE / ".cowork" / "cli_context.json"
@@ -78,7 +82,24 @@ def finalize(
 ) -> dict:
     if not context_path.exists():
         raise SystemExit(f"missing workspace context: {context_path}")
-    ctx = json.loads(context_path.read_text(encoding="utf-8"))
+    try:
+        ctx = json.loads(context_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"corrupt workspace context JSON: {context_path}: {exc}") from exc
+    if not isinstance(ctx, dict):
+        raise SystemExit(f"corrupt workspace context: expected object in {context_path}")
+    raw_config = ctx.get("task_config")
+    if not isinstance(raw_config, dict):
+        raise SystemExit(
+            f"corrupt or missing task_config in {context_path}: "
+            f"expected object, got {type(raw_config).__name__}"
+        )
+    # Defensive upgrade for legacy minimal configs; never overwrite filled fields.
+    task_config = (
+        upgrade_task_config_for_eval(raw_config)
+        if needs_eval_upgrade(raw_config)
+        else dict(raw_config)
+    )
     inferred = infer_completion(agent_dir, workspace=workspace)
     if status in ("success", "SUCCESS"):
         raise SystemExit(
@@ -97,7 +118,7 @@ def finalize(
     log_path = Path(ctx["log_file"])
     log_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "config": ctx["task_config"],
+        "config": task_config,
         "status": cowork_status,
         "start_time": ctx["start_time"],
         "end_time": datetime.now().isoformat(),
