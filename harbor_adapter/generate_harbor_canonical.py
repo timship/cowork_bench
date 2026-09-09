@@ -112,26 +112,81 @@ def _usable_groundtruth(source: Path) -> bool:
 
 
 def _rewrite_evaluation_db_secrets(evaluation_dir: Path) -> None:
-    """Point live SQL checks at PGPASSWORD/PGHOST from grader env (no literals)."""
+    """Point live SQL checks at grader Postgres env (no credential literals).
+
+    Required: ``PGUSER`` / ``PGPASSWORD`` / ``PGHOST`` / ``PGDATABASE`` via
+    ``os.environ[...]`` (KeyError if missing — fail closed, no hidden user like
+    ``eigent``). Port may default to 5432 via ``PGPORT``.
+    """
     if not evaluation_dir.is_dir():
         return
     patterns = [
-        # "password": "anything" / 'password': 'anything'
+        # "password": "literal" / already-rewritten __import__ form → os.environ
         (
             re.compile(r'(["\']password["\']\s*:\s*)["\'][^"\']*["\']', re.I),
-            r'\1__import__("os").environ["PGPASSWORD"]',
+            r'\1os.environ["PGPASSWORD"]',
         ),
-        # password="..." keyword args
-        (
-            re.compile(r'(\bpassword\s*=\s*)["\'][^"\']*["\']', re.I),
-            r'\1__import__("os").environ["PGPASSWORD"]',
-        ),
-        # host defaults that ignore PGHOST
         (
             re.compile(
-                r'(["\']host["\']\s*:\s*)(?:os\.environ\.get\(\s*["\']PGHOST["\']\s*,\s*)?["\']localhost["\']\)?'
+                r'(["\']password["\']\s*:\s*)__import__\(\s*["\']os["\']\s*\)\.environ\[\s*["\']PGPASSWORD["\']\s*\]',
+                re.I,
             ),
-            r'\1os.environ.get("PGHOST", "postgres")',
+            r'\1os.environ["PGPASSWORD"]',
+        ),
+        (
+            re.compile(r'(\bpassword\s*=\s*)["\'][^"\']*["\']', re.I),
+            r'\1os.environ["PGPASSWORD"]',
+        ),
+        # user: never keep eigent/camel-era literals or soft defaults
+        (
+            re.compile(r'(["\']user["\']\s*:\s*)["\'][^"\']*["\']', re.I),
+            r'\1os.environ["PGUSER"]',
+        ),
+        (
+            re.compile(r'(\buser\s*=\s*)["\'][^"\']*["\']', re.I),
+            r'\1os.environ["PGUSER"]',
+        ),
+        (
+            re.compile(
+                r'os\.environ\.get\(\s*["\']PGUSER["\']\s*,\s*["\'][^"\']*["\']\s*\)'
+            ),
+            'os.environ["PGUSER"]',
+        ),
+        # host: drop localhost / soft get defaults
+        (
+            re.compile(
+                r'(["\']host["\']\s*:\s*)os\.environ\.get\(\s*["\']PGHOST["\']\s*,\s*["\'][^"\']*["\']\s*\)',
+                re.I,
+            ),
+            r'\1os.environ["PGHOST"]',
+        ),
+        (
+            re.compile(r'(["\']host["\']\s*:\s*)["\'][^"\']*["\']', re.I),
+            r'\1os.environ["PGHOST"]',
+        ),
+        # database name
+        (
+            re.compile(
+                r'(["\'](?:dbname|database)["\']\s*:\s*)os\.environ\.get\(\s*["\']PGDATABASE["\']\s*,\s*["\'][^"\']*["\']\s*\)',
+                re.I,
+            ),
+            r'\1os.environ["PGDATABASE"]',
+        ),
+        (
+            re.compile(r'(["\'](?:dbname|database)["\']\s*:\s*)["\'][^"\']*["\']', re.I),
+            r'\1os.environ["PGDATABASE"]',
+        ),
+        # port literal or soft default
+        (
+            re.compile(
+                r'(["\']port["\']\s*:\s*)(?:int\(\s*)?os\.environ\.get\(\s*["\']PGPORT["\']\s*,\s*["\'][^"\']*["\']\s*\)(?:\s*\))?',
+                re.I,
+            ),
+            r'\1int(os.environ.get("PGPORT", "5432"))',
+        ),
+        (
+            re.compile(r'(["\']port["\']\s*:\s*)\d+', re.I),
+            r'\1int(os.environ.get("PGPORT", "5432"))',
         ),
     ]
     for py in evaluation_dir.rglob("*.py"):
@@ -139,7 +194,17 @@ def _rewrite_evaluation_db_secrets(evaluation_dir: Path) -> None:
         updated = original
         for rx, repl in patterns:
             updated = rx.sub(repl, updated)
-        if "import os" not in updated and "PGPASSWORD" in updated:
+        needs_os = any(
+            marker in updated
+            for marker in (
+                'os.environ["PGPASSWORD"]',
+                'os.environ["PGUSER"]',
+                'os.environ["PGHOST"]',
+                'os.environ["PGDATABASE"]',
+                'os.environ.get("PGPORT"',
+            )
+        )
+        if needs_os and not re.search(r"(?m)^\s*import\s+os\s*$", updated):
             updated = "import os\n" + updated
         if updated != original:
             py.write_text(updated, encoding="utf-8")
