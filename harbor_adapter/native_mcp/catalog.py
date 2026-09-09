@@ -9,6 +9,11 @@ from typing import Any
 
 import yaml
 
+try:
+    from .postgres_env import filter_spec_env
+except ImportError:  # flat copy under environment/mcp_runtime
+    from postgres_env import filter_spec_env
+
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_TASKS = ROOT / "tasks" / "finalpool"
 MCP_YAML_DIR = ROOT / "configs" / "mcp_servers"
@@ -135,6 +140,8 @@ def resolve_server(
     args = [expand(v, task=task) for v in params.get("args", [])]
     cwd = expand(params.get("cwd") or SHARED_WS, task=task)
     # Strip any password literals from yaml; DB gateway injects via inherit_postgres.
+    # Also drop conflicting PG_* when inherit_postgres so generated manifests cannot
+    # override task pg.env (runtime gateway filters again as a second line of defense).
     raw_env = {
         k: expand(v, task=task)
         for k, v in (params.get("env") or {}).items()
@@ -143,7 +150,8 @@ def resolve_server(
     db = (spec.get("name") or name) in DB_MCP_NAMES or _yaml_needs_db(spec)
     if include_pg is None:
         include_pg = db
-    env = dict(raw_env)
+    inherit = bool(db)
+    env = filter_spec_env(raw_env, inherit_postgres=inherit)
     _ = include_pg  # reserved for runtime injection; manifests use inherit_postgres
     return {
         "name": spec.get("name") or name,
@@ -153,7 +161,7 @@ def resolve_server(
         "env": env,
         "yaml_stem": spec.get("yaml_stem"),
         "needs_db": db,
-        "inherit_postgres": bool(db),
+        "inherit_postgres": inherit,
     }
 
 

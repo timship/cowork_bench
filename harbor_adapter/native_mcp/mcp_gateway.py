@@ -244,31 +244,14 @@ class Gateway:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         errlog = log_path.open("w", encoding="utf-8")
         stack.enter_context(errlog)
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if not k.upper().startswith("PG") and not k.upper().startswith("POSTGRES")
-        }
-        if spec.get("inherit_postgres"):
-            for key in (
-                "PGHOST",
-                "PG_HOST",
-                "PGPORT",
-                "PG_PORT",
-                "PGDATABASE",
-                "PG_DATABASE",
-                "PGUSER",
-                "PG_USER",
-                "PGPASSWORD",
-                "PG_PASSWORD",
-            ):
-                if key in os.environ:
-                    env[key] = os.environ[key]
-        env.update({str(k): str(v) for k, v in (spec.get("env") or {}).items()})
-        if not spec.get("inherit_postgres"):
-            for key in list(env):
-                if key.upper().startswith("PG") or key.upper().startswith("POSTGRES"):
-                    env.pop(key, None)
+        # inherit_postgres: task pg.env is authoritative; never let manifest
+        # PG_* (e.g. YAML PG_USER=eigent) overwrite via dict.update.
+        try:
+            from .postgres_env import build_stdio_env
+        except ImportError:  # flat copy under environment/mcp_runtime
+            from postgres_env import build_stdio_env
+
+        env = build_stdio_env(spec, environ=os.environ)
         assert slot.command
         params = StdioServerParameters(
             command=slot.command[0],

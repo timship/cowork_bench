@@ -1155,7 +1155,7 @@ def convert_one(task: str, output_root: Path, catalog: dict) -> dict:
         NATIVE_DIR / "task_config_stub.py",
         env_dir / "prep" / "task_config_stub.py",
     )
-    for name in ("__init__.py", "catalog.py", "mcp_gateway.py"):
+    for name in ("__init__.py", "catalog.py", "mcp_gateway.py", "postgres_env.py"):
         shutil.copy2(NATIVE_DIR / name, env_dir / "mcp_runtime" / name)
 
     test_sh = target / "tests" / "test.sh"
