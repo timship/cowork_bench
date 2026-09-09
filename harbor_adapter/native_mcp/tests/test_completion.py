@@ -78,13 +78,20 @@ class CompletionInferenceTests(unittest.TestCase):
         self.assertNotEqual(got.reason, "workspace_turn_finished_marker")
 
     def test_timeout_or_max_steps_is_technical_fail(self) -> None:
+        """Confirmed lifecycle timeout via structured sidecar → technical failed."""
         d = _agent_dir()
-        (d / "openhands.txt").write_text(
-            "Reached maximum number of iterations (100)\nAgentTimeoutError\n",
-            encoding="utf-8",
-        )
         (d / "openhands.trajectory.json").write_text(
             json.dumps({"history": [{"action": "run"}]}),
+            encoding="utf-8",
+        )
+        (d / "agent_exit.json").write_text(
+            json.dumps(
+                {
+                    "timed_out": True,
+                    "status": "timeout",
+                    "exception": "AgentTimeoutError",
+                }
+            ),
             encoding="utf-8",
         )
         got = infer_completion(d)
@@ -93,15 +100,169 @@ class CompletionInferenceTests(unittest.TestCase):
         self.assertEqual(got.reason, "timeout_or_max_steps")
         self.assertEqual(got.cowork_status, "failed")
 
-    def test_exception_crash_is_technical_fail(self) -> None:
+    def test_timeout_marker_strings_in_tool_output_still_allow_eval(self) -> None:
+        """Former TIMEOUT_MARKERS must not fail when only present in tool output."""
+        markers = (
+            "AgentTimeoutError",
+            "timed out after",
+            "TimeoutError",
+            "Reached maximum number of iterations",
+            "reached max iterations",
+            "max_iterations",
+            "Maximum number of turns",
+            "max turns reached",
+            "Agent execution timed out",
+        )
+        for marker in markers:
+            with self.subTest(marker=marker):
+                d = _agent_dir()
+                traj = {
+                    "history": [
+                        {
+                            "action": "run",
+                            "args": {"command": "python /workspace/cowork_shared/x.py"},
+                            "observation": (
+                                f"{marker} emitted by tool/script output\n"
+                                "agent continues after captured timeout-like text\n"
+                            ),
+                        },
+                        {"action": "run", "args": {"command": "ls"}},
+                    ]
+                }
+                (d / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
+                (d / "openhands.txt").write_text(
+                    f"tool printed {marker}\nAgent finished with exit code 0\n",
+                    encoding="utf-8",
+                )
+                got = infer_completion(d)
+                self.assertTrue(got.confirmed, msg=marker)
+                self.assertEqual(got.reason, "agent_process_completed", msg=marker)
+                self.assertEqual(got.cowork_status, "success", msg=marker)
+
+    def test_structured_max_steps_status_is_technical_fail(self) -> None:
         d = _agent_dir()
-        (d / "agent.log").write_text(
-            "Traceback (most recent call last):\n  File \"x.py\", line 1\nFatal error\n",
+        (d / "trajectory.json").write_text(
+            json.dumps({"history": [{"action": "run"}]}),
+            encoding="utf-8",
+        )
+        (d / "harbor_agent_exit.json").write_text(
+            json.dumps({"status": "max_iterations", "exit_code": 0}),
+            encoding="utf-8",
+        )
+        got = infer_completion(d)
+        self.assertFalse(got.confirmed)
+        self.assertEqual(got.reason, "timeout_or_max_steps")
+        self.assertEqual(got.cowork_status, "failed")
+
+    def test_structured_nonzero_exit_sidecar_is_technical_fail(self) -> None:
+        d = _agent_dir()
+        (d / "trajectory.json").write_text(
+            json.dumps({"history": [{"action": "run"}]}),
+            encoding="utf-8",
+        )
+        (d / "agent_exit.json").write_text(
+            json.dumps({"exit_code": 1}),
             encoding="utf-8",
         )
         got = infer_completion(d)
         self.assertFalse(got.confirmed)
         self.assertEqual(got.reason, "exception_or_crash")
+        self.assertEqual(got.cowork_status, "failed")
+
+    def test_crash_marker_strings_in_tool_output_still_allow_eval(self) -> None:
+        """Former CRASH_MARKERS must not fail when only present in tool output."""
+        markers = (
+            "NonZeroAgentExitCodeError",
+            "Command failed (exit",
+            "Fatal error",
+            "Segmentation fault",
+            "Traceback (most recent call last)",
+        )
+        for marker in markers:
+            with self.subTest(marker=marker):
+                d = _agent_dir()
+                traj = {
+                    "history": [
+                        {
+                            "action": "run",
+                            "args": {"command": "python /workspace/cowork_shared/x.py"},
+                            "observation": (
+                                f"{marker} emitted by tool/script output\n"
+                                "agent continues after captured failure\n"
+                            ),
+                        },
+                        {"action": "run", "args": {"command": "ls"}},
+                    ]
+                }
+                (d / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
+                got = infer_completion(d)
+                self.assertTrue(got.confirmed, msg=marker)
+                self.assertEqual(got.reason, "agent_process_completed", msg=marker)
+                self.assertEqual(got.cowork_status, "success", msg=marker)
+
+    def test_traceback_in_tool_output_still_allows_eval(self) -> None:
+        """Sample50 false-technical: script Traceback inside traj ≠ process crash."""
+        d = _agent_dir()
+        traj = {
+            "history": [
+                {
+                    "action": "run",
+                    "args": {"command": "python /workspace/cowork_shared/script.py"},
+                    "observation": (
+                        "Traceback (most recent call last):\n"
+                        '  File "/workspace/cowork_shared/script.py", line 1, in <module>\n'
+                        "ModuleNotFoundError: No module named 'gspread'\n"
+                    ),
+                },
+                {"action": "run", "args": {"command": "ls /workspace/cowork_shared"}},
+            ]
+        }
+        (d / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
+        (d / "openhands.txt").write_text(
+            "Agent finished with exit code 0\n", encoding="utf-8"
+        )
+        got = infer_completion(d)
+        self.assertTrue(got.confirmed)
+        self.assertEqual(got.status, "SUCCESS")
+        self.assertEqual(got.reason, "agent_process_completed")
+        self.assertEqual(got.cowork_status, "success")
+
+    def test_traceback_plus_turn_finish_text_still_allows_eval(self) -> None:
+        """turn_finish text must not be required; Traceback in traj must not fail."""
+        d = _agent_dir()
+        traj = {
+            "events": [
+                {
+                    "type": "tool_result",
+                    "content": (
+                        "Traceback (most recent call last):\n"
+                        '  File "<string>", line 1, in <module>\n'
+                        "ValueError: boom\n"
+                    ),
+                },
+                {
+                    "type": "tool_call",
+                    "name": "turn_finish",
+                    "content": '{"tool": "turn_finish", "ok": true, "status": "submitted"}',
+                },
+            ]
+        }
+        (d / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
+        got = infer_completion(d)
+        self.assertTrue(got.confirmed)
+        self.assertEqual(got.reason, "agent_process_completed")
+        self.assertEqual(got.cowork_status, "success")
+
+    def test_normal_exit_without_turn_finish_or_marker_allows_eval(self) -> None:
+        d = _agent_dir()
+        (d / "trajectory.json").write_text(
+            json.dumps({"history": [{"action": "run", "args": {"command": "echo hi"}}]}),
+            encoding="utf-8",
+        )
+        got = infer_completion(d)
+        self.assertTrue(got.confirmed)
+        self.assertEqual(got.reason, "agent_process_completed")
+        self.assertEqual(got.cowork_status, "success")
 
     def test_corrupt_trajectory_is_technical_fail(self) -> None:
         d = _agent_dir()
@@ -109,6 +270,21 @@ class CompletionInferenceTests(unittest.TestCase):
         got = infer_completion(d)
         self.assertFalse(got.confirmed)
         self.assertEqual(got.reason, "corrupt_agent_artifact")
+        self.assertEqual(got.cowork_status, "failed")
+
+    def test_zero_exit_sidecar_allows_eval(self) -> None:
+        d = _agent_dir()
+        (d / "trajectory.json").write_text(
+            json.dumps({"history": []}),
+            encoding="utf-8",
+        )
+        (d / "agent_exit.json").write_text(
+            json.dumps({"exit_code": 0}),
+            encoding="utf-8",
+        )
+        got = infer_completion(d)
+        self.assertTrue(got.confirmed)
+        self.assertEqual(got.reason, "agent_process_completed")
 
     def test_qwen_session_without_finish_allows_eval(self) -> None:
         d = _agent_dir()
@@ -180,12 +356,46 @@ class FinalizeContractTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "success")
 
+    def test_finalize_traceback_in_traj_still_success_for_eval(self) -> None:
+        ws = Path(tempfile.mkdtemp(prefix="cowork-tb-"))
+        log = ws / "traj_log.json"
+        _ctx(ws, log)
+        agent = _agent_dir()
+        (agent / "trajectory.json").write_text(
+            json.dumps(
+                {
+                    "history": [
+                        {
+                            "observation": (
+                                "Traceback (most recent call last):\n"
+                                '  File "/workspace/cowork_shared/x.py", line 1\n'
+                                "RuntimeError: tool script failed\n"
+                            )
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = finalize(
+            status=None,
+            workspace=ws,
+            agent_dir=agent,
+            context_path=ws / ".cowork" / "cli_context.json",
+        )
+        self.assertEqual(result["status"], "success")
+        dumped = json.loads(log.read_text(encoding="utf-8"))
+        self.assertEqual(dumped["status"], "success")
+
     def test_finalize_timeout_is_failed(self) -> None:
         ws = Path(tempfile.mkdtemp(prefix="cowork-to-"))
         log = ws / "traj_log.json"
         _ctx(ws, log)
         agent = _agent_dir()
-        (agent / "openhands.txt").write_text("AgentTimeoutError\n", encoding="utf-8")
+        (agent / "agent_exit.json").write_text(
+            json.dumps({"timed_out": True, "exception": "AgentTimeoutError"}),
+            encoding="utf-8",
+        )
         result = finalize(
             status=None,
             workspace=ws,
@@ -195,6 +405,36 @@ class FinalizeContractTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         dumped = json.loads(log.read_text(encoding="utf-8"))
         self.assertEqual(dumped["status"], "failed")
+
+    def test_finalize_timeout_text_in_tool_output_allows_eval(self) -> None:
+        ws = Path(tempfile.mkdtemp(prefix="cowork-to-tool-"))
+        log = ws / "traj_log.json"
+        _ctx(ws, log)
+        agent = _agent_dir()
+        (agent / "trajectory.json").write_text(
+            json.dumps(
+                {
+                    "history": [
+                        {
+                            "observation": (
+                                "TimeoutError: request timed out after 30s\n"
+                                "AgentTimeoutError in captured tool log\n"
+                            )
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = finalize(
+            status=None,
+            workspace=ws,
+            agent_dir=agent,
+            context_path=ws / ".cowork" / "cli_context.json",
+        )
+        self.assertEqual(result["status"], "success")
+        dumped = json.loads(log.read_text(encoding="utf-8"))
+        self.assertEqual(dumped["status"], "success")
 
     def test_cowork_status_lowercase_matches_task_status(self) -> None:
         ok = CompletionInference(confirmed=True, status="SUCCESS", reason="x")
@@ -360,7 +600,10 @@ class EvalGateRewardContractTests(unittest.TestCase):
         log = ws / "traj_log.json"
         _ctx(ws, log)
         agent = _agent_dir()
-        (agent / "x.log").write_text("AgentTimeoutError\n", encoding="utf-8")
+        (agent / "agent_exit.json").write_text(
+            json.dumps({"timed_out": True}),
+            encoding="utf-8",
+        )
         finalize(
             status=None,
             workspace=ws,

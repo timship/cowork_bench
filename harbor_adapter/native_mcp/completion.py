@@ -10,10 +10,26 @@ Contract (Aidar review):
   shared evaluator gate runs content checks.
 - Reward comes **only** from the evaluator (pass true/false). No soft-PASS from
   artifacts, finish tools, or ``.cowork/TURN_FINISHED``.
-- Real runtime failures — timeout / max-steps, crash signatures, corrupt agent
-  artifacts, forced ``--status failed`` — stay ``failed`` (technical fail;
-  ``pass`` is null, not a content score).
+- Technical ``failed`` only for:
+
+  - confirmed timeout / max-steps from structured process-lifecycle sidecars,
+  - corrupt / unreadable required agent trajectory artifacts,
+  - confirmed process crash / nonzero exit from the same sidecars,
+  - forced ``--status failed`` from the finalize CLI.
+
+- Free-text strings that tools or user commands may emit (including
+  ``Traceback``, ``TimeoutError``, ``AgentTimeoutError``,
+  ``Fatal error``, ``Segmentation fault``,
+  ``NonZeroAgentExitCodeError``, ``Command failed (exit``) are **never**
+  treated as conclusive process crash/timeout when they appear only inside
+  trajectory / tool output / arbitrary agent log text.
 - No agent-specific ``turn_finish`` / finish-action / UA log parsing.
+
+Exit-code gap: stock Harbor UA trials observed in sample50 do **not** expose
+an agent process ``exit_code`` inside ``/logs/agent``. Host ``result.json``
+also lacks it (``agent_execution`` is timestamps only). Until Harbor writes a
+structured sidecar (see ``_LIFECYCLE_EXIT_FILES``), normal completion is
+inferred whenever corrupt checks pass and no sidecar reports failure.
 """
 
 from __future__ import annotations
@@ -23,23 +39,38 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-TIMEOUT_MARKERS = (
-    "AgentTimeoutError",
-    "timed out after",
-    "TimeoutError",
-    "Reached maximum number of iterations",
-    "reached max iterations",
-    "max_iterations",
-    "Maximum number of turns",
-    "max turns reached",
-    "Agent execution timed out",
+# Optional Harbor/agent lifecycle sidecars. Only these filenames are consulted
+# for process exit / timeout — never trajectory or free-text log scans.
+_LIFECYCLE_EXIT_FILES = (
+    "agent_exit.json",
+    "harbor_agent_exit.json",
+    "agent_process.json",
 )
-CRASH_MARKERS = (
-    "Traceback (most recent call last)",
-    "NonZeroAgentExitCodeError",
-    "Command failed (exit",
-    "Fatal error",
-    "Segmentation fault",
+
+# Structured status/reason tokens that confirm harness timeout / max-steps.
+_TIMEOUT_STATUS_TOKENS = frozenset(
+    {
+        "timeout",
+        "timed_out",
+        "timedout",
+        "agent_timeout",
+        "max_steps",
+        "max_iterations",
+        "max_turns",
+        "maximum_iterations",
+        "maximum_turns",
+    }
+)
+
+_TIMEOUT_EXCEPTION_TOKENS = (
+    "AgentTimeoutError",
+    "TimeoutError",
+    "timeout",
+    "timed out",
+    "max iterations",
+    "max turns",
+    "maximum number of iterations",
+    "maximum number of turns",
 )
 
 
@@ -77,12 +108,13 @@ def infer_completion(
             evidence=[str(agent_dir)],
         )
 
-    timeout = _scan_text_markers(agent_dir, TIMEOUT_MARKERS)
+    timeout = _structured_timeout(agent_dir)
     if timeout:
         return CompletionInference(
             confirmed=False,
             status="FAILED",
             reason="timeout_or_max_steps",
+            framework=_guess_framework(agent_dir),
             evidence=timeout,
         )
 
@@ -96,14 +128,14 @@ def infer_completion(
             evidence=corrupt,
         )
 
-    crash = _scan_text_markers(agent_dir, CRASH_MARKERS)
-    if crash:
+    lifecycle_crash = _structured_process_failure(agent_dir)
+    if lifecycle_crash:
         return CompletionInference(
             confirmed=False,
             status="FAILED",
             reason="exception_or_crash",
             framework=_guess_framework(agent_dir),
-            evidence=crash,
+            evidence=lifecycle_crash,
         )
 
     evidence: list[str] = []
@@ -140,23 +172,86 @@ def _candidate_files(agent_dir: Path, names: Iterable[str]) -> list[Path]:
     return found
 
 
-def _scan_text_markers(agent_dir: Path, markers: tuple[str, ...]) -> list[str]:
-    hits: list[str] = []
-    for path in agent_dir.rglob("*"):
+def _iter_lifecycle_sidecars(agent_dir: Path) -> Iterable[tuple[Path, dict[str, Any]]]:
+    for name in _LIFECYCLE_EXIT_FILES:
+        path = agent_dir / name
         if not path.is_file():
             continue
-        if path.suffix.lower() not in {".txt", ".log", ".json", ".jsonl", ""}:
+        data, err = _load_json(path)
+        if err or not isinstance(data, dict):
             continue
-        if path.stat().st_size > 4_000_000:
+        yield path, data
+
+
+def _exception_blob(data: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("exception", "exception_info", "error", "error_type", "exc_type"):
+        val = data.get(key)
+        if val is None:
+            continue
+        parts.append(val if isinstance(val, str) else json.dumps(val, ensure_ascii=False))
+    return " ".join(parts)
+
+
+def _structured_timeout(agent_dir: Path) -> list[str]:
+    """Return evidence if a structured lifecycle sidecar reports timeout/max-steps.
+
+    Ignores trajectory / tool logs / free-text agent logs entirely.
+    """
+    evidence: list[str] = []
+    for path, data in _iter_lifecycle_sidecars(agent_dir):
+        if data.get("timed_out") is True or data.get("timeout") is True:
+            evidence.append(f"{path.name}: timed_out/timeout flag")
+            continue
+
+        for key in ("status", "reason", "completion_reason", "stop_reason"):
+            raw = data.get(key)
+            if raw is None:
+                continue
+            token = str(raw).strip().lower().replace(" ", "_").replace("-", "_")
+            if token in _TIMEOUT_STATUS_TOKENS:
+                evidence.append(f"{path.name}: {key}={raw}")
+
+        blob = _exception_blob(data).lower()
+        if blob and any(tok.lower() in blob for tok in _TIMEOUT_EXCEPTION_TOKENS):
+            evidence.append(f"{path.name}: timeout exception={_exception_blob(data)}")
+    return evidence
+
+
+def _structured_process_failure(agent_dir: Path) -> list[str]:
+    """Return evidence if a structured lifecycle sidecar reports process failure.
+
+    Ignores trajectory / tool logs entirely. Missing sidecars mean "unknown
+    exit" and are treated as non-failure (evaluator still runs).
+    Timeout-shaped exceptions are handled by ``_structured_timeout`` first.
+    """
+    evidence: list[str] = []
+    for name in _LIFECYCLE_EXIT_FILES:
+        path = agent_dir / name
+        if not path.is_file():
+            continue
+        data, err = _load_json(path)
+        if err:
+            evidence.append(err)
+            continue
+        if not isinstance(data, dict):
+            evidence.append(f"{path.name}: expected object")
+            continue
+        if data.get("exception") or data.get("exception_info"):
+            evidence.append(
+                f"{path.name}: exception={data.get('exception') or data.get('exception_info')}"
+            )
+        raw_code = data.get("exit_code", data.get("returncode", data.get("return_code")))
+        if raw_code is None:
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            code = int(raw_code)
+        except (TypeError, ValueError):
+            evidence.append(f"{path.name}: non-integer exit_code={raw_code!r}")
             continue
-        for marker in markers:
-            if marker in text:
-                hits.append(f"{path.name}: {marker}")
-    return hits
+        if code != 0:
+            evidence.append(f"{path.name}: exit_code={code}")
+    return evidence
 
 
 def _corrupt_artifacts(agent_dir: Path) -> list[str]:
