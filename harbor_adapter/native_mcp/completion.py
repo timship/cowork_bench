@@ -1,36 +1,28 @@
-"""Fail-closed completion inference for stock Harbor OpenHands / Qwen Code.
+"""Agent-neutral completion for stock Harbor agents (UA / Qwen / OpenHands / …).
 
 Harbor does **not** put TrialResult into the task container before the
-verifier. Collect hooks and tests/test.sh only see /logs/agent/* and the
-workspace. Stock adapters also do not share one "task complete" API:
+verifier. Finalize only sees ``/logs/agent/*`` and the workspace.
 
-- OpenHands: explicit ``finish`` / ``task_complete`` action in its trajectory.
-- Qwen Code: session jsonl has turns/tools; no first-class finish. Optional
-  workspace marker ``.cowork/TURN_FINISHED`` is the only agent-agnostic proof.
-- Exit code 0 is **not** completion (max iterations often exits 0).
-- Harbor records AgentTimeoutError / NonZeroAgentExitCodeError on the host
-  and still runs the verifier; those types are not visible in-container unless
-  the agent log contains a timeout/crash signature.
+Contract (Aidar review):
 
-This module never defaults to SUCCESS.
+- Missing agent artifacts or completion markers must **not** block ``run_eval``.
+- After a normal agent-process exit, traj_log ``status`` is ``success`` so the
+  shared evaluator gate runs content checks.
+- Reward comes **only** from the evaluator (pass true/false). No soft-PASS from
+  artifacts, finish tools, or ``.cowork/TURN_FINISHED``.
+- Real runtime failures — timeout / max-steps, crash signatures, corrupt agent
+  artifacts, forced ``--status failed`` — stay ``failed`` (technical fail;
+  ``pass`` is null, not a content score).
+- No agent-specific ``turn_finish`` / finish-action / UA log parsing.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-FINISH_ACTIONS = {
-    "finish",
-    "task_complete",
-    "taskcomplete",
-    "attempt_completion",
-    "complete_task",
-    "submit",
-}
 TIMEOUT_MARKERS = (
     "AgentTimeoutError",
     "timed out after",
@@ -49,7 +41,6 @@ CRASH_MARKERS = (
     "Fatal error",
     "Segmentation fault",
 )
-TURN_FINISHED_REL = Path(".cowork") / "TURN_FINISHED"
 
 
 @dataclass
@@ -70,11 +61,18 @@ def infer_completion(
     agent_dir: Path,
     workspace: Path | None = None,
 ) -> CompletionInference:
-    """Inspect agent artifacts. SUCCESS only with explicit completion proof."""
+    """Allow eval unless a technical agent/runtime failure is evident.
+
+    ``workspace`` is accepted for API compatibility; markers under it are
+    ignored and never grant success by themselves.
+    """
+    _ = workspace  # intentionally unused — no TURN_FINISHED / marker gate
+
     if not agent_dir.exists():
+        # Harbor may finalize with an empty/missing bind; still run evaluator.
         return CompletionInference(
-            confirmed=False,
-            status="FAILED",
+            confirmed=True,
+            status="SUCCESS",
             reason="missing_agent_dir",
             evidence=[str(agent_dir)],
         )
@@ -88,26 +86,13 @@ def infer_completion(
             evidence=timeout,
         )
 
-    oh = _openhands_finish(agent_dir)
-    if oh.confirmed:
-        return oh
-    qwen = _qwen_finish(agent_dir)
-    if qwen.confirmed:
-        return qwen
-    marker = _workspace_marker(workspace) if workspace else None
-    if marker and marker.confirmed:
-        return marker
-
-    if oh.reason == "corrupt_agent_artifact":
-        return oh
-    if qwen.reason == "corrupt_agent_artifact":
-        return qwen
     corrupt = _corrupt_artifacts(agent_dir)
     if corrupt:
         return CompletionInference(
             confirmed=False,
             status="FAILED",
             reason="corrupt_agent_artifact",
+            framework=_guess_framework(agent_dir),
             evidence=corrupt,
         )
 
@@ -117,204 +102,22 @@ def infer_completion(
             confirmed=False,
             status="FAILED",
             reason="exception_or_crash",
+            framework=_guess_framework(agent_dir),
             evidence=crash,
         )
 
-    if oh.framework == "openhands" or qwen.framework == "qwen-code":
-        return CompletionInference(
-            confirmed=False,
-            status="FAILED",
-            reason="unconfirmed_exit",
-            framework=oh.framework or qwen.framework,
-            evidence=(oh.evidence or qwen.evidence)
-            + ["exit_or_stop_without_finish_action"],
-        )
-
+    evidence: list[str] = []
     if _has_any_agent_log(agent_dir):
-        return CompletionInference(
-            confirmed=False,
-            status="FAILED",
-            reason="unconfirmed_exit",
-            framework=_guess_framework(agent_dir),
-            evidence=["exit_or_stop_without_finish_action"],
-        )
-
-    return CompletionInference(
-        confirmed=False,
-        status="FAILED",
-        reason="missing_agent_artifact",
-        evidence=[f"no recognized agent logs under {agent_dir}"],
-    )
-
-
-def _workspace_marker(workspace: Path) -> CompletionInference | None:
-    path = workspace / TURN_FINISHED_REL
-    if not path.is_file():
-        return None
-    text = path.read_text(encoding="utf-8", errors="replace").strip()
-    if not text:
-        return CompletionInference(
-            confirmed=False,
-            status="FAILED",
-            reason="corrupt_agent_artifact",
-            evidence=[f"empty {path}"],
-        )
+        evidence.append("agent_logs_present")
+    else:
+        evidence.append("missing_agent_artifact")
     return CompletionInference(
         confirmed=True,
         status="SUCCESS",
-        reason="workspace_turn_finished_marker",
-        framework="agnostic",
-        evidence=[str(path)],
+        reason="agent_process_completed",
+        framework=_guess_framework(agent_dir),
+        evidence=evidence,
     )
-
-
-def _openhands_finish(agent_dir: Path) -> CompletionInference:
-    evidence: list[str] = []
-    corrupt: list[str] = []
-    for path in _candidate_files(
-        agent_dir,
-        (
-            "openhands.trajectory.json",
-            "trajectory.json",
-        ),
-    ):
-        data, err = _load_json(path)
-        if err:
-            corrupt.append(err)
-            continue
-        if _json_has_finish(data):
-            return CompletionInference(
-                confirmed=True,
-                status="SUCCESS",
-                reason="openhands_finish_action",
-                framework="openhands",
-                evidence=[str(path)],
-            )
-        evidence.append(f"{path.name}: parsed, no finish action")
-
-    events_dir = None
-    for cand in agent_dir.rglob("events"):
-        if cand.is_dir():
-            events_dir = cand
-            break
-    if events_dir is not None:
-        saw_event = False
-        for event_file in sorted(events_dir.glob("*.json")):
-            data, err = _load_json(event_file)
-            if err:
-                corrupt.append(err)
-                continue
-            saw_event = True
-            if _json_has_finish(data):
-                return CompletionInference(
-                    confirmed=True,
-                    status="SUCCESS",
-                    reason="openhands_finish_action",
-                    framework="openhands",
-                    evidence=[str(event_file)],
-                )
-        if saw_event:
-            evidence.append(f"{events_dir}: events without finish")
-
-    if corrupt and not evidence:
-        return CompletionInference(
-            confirmed=False,
-            status="FAILED",
-            reason="corrupt_agent_artifact",
-            framework="openhands",
-            evidence=corrupt,
-        )
-    return CompletionInference(
-        confirmed=False,
-        status="FAILED",
-        reason="openhands_no_finish",
-        framework="openhands" if evidence or corrupt else None,
-        evidence=evidence + corrupt,
-    )
-
-
-def _qwen_finish(agent_dir: Path) -> CompletionInference:
-    sessions = agent_dir / "qwen-sessions"
-    jsonl_files = list(sessions.rglob("*.jsonl")) if sessions.is_dir() else []
-    jsonl_files += list(agent_dir.glob("*.jsonl"))
-    if not jsonl_files:
-        return CompletionInference(
-            confirmed=False,
-            status="FAILED",
-            reason="qwen_no_session",
-            framework=None,
-        )
-    corrupt: list[str] = []
-    saw_turn = False
-    for path in jsonl_files:
-        try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError as exc:
-            corrupt.append(f"{path}: {exc}")
-            continue
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError as exc:
-                corrupt.append(f"{path}: {exc}")
-                continue
-            saw_turn = True
-            if _json_has_finish(event):
-                return CompletionInference(
-                    confirmed=True,
-                    status="SUCCESS",
-                    reason="qwen_finish_tool",
-                    framework="qwen-code",
-                    evidence=[str(path)],
-                )
-    if corrupt and not saw_turn:
-        return CompletionInference(
-            confirmed=False,
-            status="FAILED",
-            reason="corrupt_agent_artifact",
-            framework="qwen-code",
-            evidence=corrupt,
-        )
-    return CompletionInference(
-        confirmed=False,
-        status="FAILED",
-        reason="qwen_no_finish_tool",
-        framework="qwen-code",
-        evidence=[f"parsed {len(jsonl_files)} jsonl file(s), no finish tool"] + corrupt,
-    )
-
-
-def _json_has_finish(data: Any) -> bool:
-    if isinstance(data, dict):
-        action = str(data.get("action") or data.get("type") or "").lower()
-        if action in FINISH_ACTIONS:
-            return True
-        name = str(
-            data.get("function_name")
-            or data.get("name")
-            or (data.get("function") or {}).get("name")
-            or ""
-        ).lower()
-        if name in FINISH_ACTIONS:
-            return True
-        fc = data.get("functionCall") or {}
-        if isinstance(fc, dict) and str(fc.get("name") or "").lower() in FINISH_ACTIONS:
-            return True
-        for key in ("history", "events", "steps", "messages", "parts"):
-            if key in data and _json_has_finish(data[key]):
-                return True
-        for key in ("tool_calls", "toolCalls"):
-            if key in data and _json_has_finish(data[key]):
-                return True
-        msg = data.get("message")
-        if isinstance(msg, dict) and _json_has_finish(msg):
-            return True
-    elif isinstance(data, list):
-        return any(_json_has_finish(item) for item in data)
-    return False
 
 
 def _load_json(path: Path) -> tuple[Any | None, str | None]:

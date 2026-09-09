@@ -2,9 +2,9 @@
 """Task-side Cowork workspace prepare/finalize for stock Harbor agents.
 
 Prepare runs the standard TaskConfig.build + preprocess path.
-Finalize writes traj_log.json for evaluation/main.py but **never** defaults
-to SUCCESS: status is inferred from Harbor agent artifacts (fail-closed).
-Reward criteria in evaluation/ are not modified.
+Finalize writes traj_log.json for ``run_eval``: ``success`` after a normal
+agent-process exit (artifacts optional), ``failed`` on technical errors.
+Reward still comes only from the evaluator — finalize never awards PASS.
 """
 
 from __future__ import annotations
@@ -103,8 +103,8 @@ def finalize(
     inferred = infer_completion(agent_dir, workspace=workspace)
     if status in ("success", "SUCCESS"):
         raise SystemExit(
-            "refusing --status success; completion is inferred fail-closed "
-            "from /logs/agent artifacts"
+            "refusing --status success; traj status is inferred "
+            "(success unless technical agent/runtime failure)"
         )
     if status in ("failed", "FAILED") and inferred.confirmed:
         inferred = CompletionInference(
@@ -147,7 +147,7 @@ def main() -> None:
         "--status",
         choices=("failed",),
         default=None,
-        help="Optional override. SUCCESS cannot be forced; it is inferred.",
+        help="Optional override. Only failed may be forced; success is inferred.",
     )
     done.add_argument("--agent-dir", type=Path, default=AGENT_DIR)
     done.add_argument("--workspace", type=Path, default=SHARED_WORKSPACE)
