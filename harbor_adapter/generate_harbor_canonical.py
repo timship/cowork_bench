@@ -857,11 +857,16 @@ def _verifier(task: str, *, has_db: bool) -> str:
                 cp -a /tests/groundtruth_workspace_cn "$ROOT/groundtruth_workspace_cn"
               fi
 
+              # run_eval invokes ``python -m tasks.finalpool.<task>.evaluation.main``.
+              # Flat sibling imports (``from check_local import ...``) resolve only if
+              # the evaluation directory is on PYTHONPATH — /workspace alone is not enough.
+              export PYTHONPATH="$ROOT/evaluation:/workspace"
+
               ORACLE_WORKSPACE=/logs/artifacts/cowork/oracle_workspace
               if [ -f "$ORACLE_WORKSPACE/.oracle-ready" ]; then
                 MODE="oracle"
                 set +e
-                PYTHONPATH=/workspace /opt/venv/bin/python3 -u "$ROOT/evaluation/main.py" \\
+                /opt/venv/bin/python3 -u "$ROOT/evaluation/main.py" \\
                   --agent_workspace "$ORACLE_WORKSPACE" \\
                   --groundtruth_workspace "$ROOT/groundtruth_workspace" \\
                   --res_log_file "$RESULT_JSON" \\
@@ -878,7 +883,7 @@ def _verifier(task: str, *, has_db: bool) -> str:
                 else
                   EVAL_RES="$(dirname "$LOG")/eval_res.json"
                   set +e
-                  PYTHONPATH=/workspace /opt/venv/bin/python3 -u /workspace/scripts/run_eval.py \\
+                  /opt/venv/bin/python3 -u /workspace/scripts/run_eval.py \\
                     --log_file "$LOG" >"$EVAL_STDOUT" 2>"$EVAL_STDERR"
                   EVAL_RC=$?
                   set -e

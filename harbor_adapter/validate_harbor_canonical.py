@@ -62,6 +62,78 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _flat_sibling_imports(py_path: Path, local_mods: set[str]) -> set[str]:
+    """Return top-level local module names imported flatly (not relative)."""
+    import ast
+
+    try:
+        tree = ast.parse(py_path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return set()
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.level and node.level > 0:
+                continue
+            if not node.module:
+                continue
+            top = node.module.split(".", 1)[0]
+            if top in local_mods:
+                found.add(top)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".", 1)[0]
+                if top in local_mods:
+                    found.add(top)
+    return found
+
+
+def _validate_evaluation_local_imports(task_dir: Path) -> list[str]:
+    """Ensure packaged evaluator siblings exist and are importable under ``-m``.
+
+    Harbor ``run_eval`` launches ``python -m tasks.finalpool.<task>.evaluation.main``.
+    Flat sibling imports (``from check_local import ...``) require the evaluation
+    directory on PYTHONPATH. Packaging must:
+
+    1. copy every local ``*.py`` referenced by evaluation sources into
+       ``tests/evaluation/``;
+    2. put ``$ROOT/evaluation`` on PYTHONPATH in ``tests/test.sh`` before
+       ``run_eval`` / oracle evaluation.
+    """
+    errs: list[str] = []
+    eval_dir = task_dir / "tests" / "evaluation"
+    if not eval_dir.is_dir():
+        return ["missing tests/evaluation"]
+
+    packaged = {p.stem for p in eval_dir.glob("*.py") if p.is_file()}
+    local_mods = packaged - {"__init__"}
+    missing: set[str] = set()
+    for py in eval_dir.glob("*.py"):
+        for mod in _flat_sibling_imports(py, local_mods | {"check_local", "check_gsheet", "check_email", "check_gcal", "build_groundtruth"}):
+            if not (eval_dir / f"{mod}.py").is_file():
+                missing.add(mod)
+    for mod in sorted(missing):
+        errs.append(f"tests/evaluation missing local import module {mod}.py")
+
+    test_sh = task_dir / "tests" / "test.sh"
+    if test_sh.is_file():
+        text = test_sh.read_text(encoding="utf-8")
+        if "run_eval.py" in text or "evaluation/main.py" in text:
+            if "$ROOT/evaluation" not in text and "${ROOT}/evaluation" not in text:
+                errs.append(
+                    "tests/test.sh must put $ROOT/evaluation on PYTHONPATH "
+                    "(required for flat sibling imports under python -m)"
+                )
+            if re.search(
+                r"(?m)^\s*PYTHONPATH=/workspace\s+/opt/venv/bin/python3", text
+            ):
+                errs.append(
+                    "tests/test.sh sets PYTHONPATH=/workspace alone for evaluator; "
+                    "include $ROOT/evaluation"
+                )
+    return errs
+
+
 def _validate_pg_env(compose: str, env_path: Path) -> list[str]:
     """Validate the packaged env_file without creating or deleting files."""
     references_pg_env = bool(re.search(r"(?m)^\s*-\s+\./pg\.env\s*$", compose))
@@ -93,6 +165,8 @@ def validate_task(task_dir: Path, *, skip_docker: bool = False) -> list[str]:
     for rel in required:
         if not (task_dir / rel).exists():
             errs.append(f"missing {rel}")
+
+    errs.extend(_validate_evaluation_local_imports(task_dir))
 
     instr = _read(task_dir / "instruction.md") if (task_dir / "instruction.md").exists() else ""
     if AGENT_LEAKS.search(instr):
