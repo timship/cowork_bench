@@ -98,6 +98,81 @@ WORKSPACE_HINT = (
 )
 
 
+
+def _instruction_localhost_port(instruction: str) -> int | None:
+    """Port named by the agent instruction, not by preprocess source."""
+    match = re.search(r"localhost:(\d{2,5})", instruction)
+    return int(match.group(1)) if match else None
+
+
+# These tasks start a local HTTP server from preprocess/main.py, but they have
+# no mock_pages.tar.gz, so canonical compose used to leave main on `sleep`.
+# The agent instruction calls localhost on the preprocess port. Serve the same
+# static tree from main. Do not rewrite instruction.md or the evaluator.
+PREPROCESS_HTTP_WITHOUT_TAR = {
+    "canvas-faculty-workload-review": {
+        "port": 30220,
+        "volume": "      - ./task_payload/tmp/mock_pages:/opt/mock_pages:ro\n",
+        "directory": "/opt/mock_pages",
+    },
+    "canvas-scholarly-curriculum-review": {
+        "port": 30238,
+        "volume": "      - ./task_payload/files/mock_pages:/opt/mock_pages:ro\n",
+        "directory": "/opt/mock_pages",
+    },
+    "insales-yf-commodity-pricing-impact": {
+        "port": 30236,
+        "volume": "      - ./task_payload/files/mock_pages:/opt/mock_pages:ro\n",
+        "directory": "/opt/mock_pages",
+    },
+    "kulinar-event-menu-planner": {
+        "port": 30234,
+        "volume": "      - ./task_payload/files/mock_pages:/opt/mock_pages:ro\n",
+        "directory": "/opt/mock_pages",
+    },
+    "kulinar-grocery-budget-planner": {
+        "port": 30233,
+        "volume": "      - ./task_payload/files/mock_pages:/opt/mock_pages:ro\n",
+        "directory": "/opt/mock_pages",
+    },
+    "moex-earnings-calendar-alert": {
+        "port": 30225,
+        "volume": "      - ./task_payload/files/mock_pages:/opt/mock_pages:ro\n",
+        "directory": "/opt/mock_pages",
+    },
+    "moex-macro-investment-report": {
+        "port": 30222,
+        "volume": "      - ./task_payload/files/mock_pages:/opt/mock_pages:ro\n",
+        "directory": "/opt/mock_pages",
+    },
+    "moex-peer-benchmark-analysis": {
+        "port": 30223,
+        "volume": "      - ./task_payload/files/mock_pages:/opt/mock_pages:ro\n",
+        "directory": "/opt/mock_pages",
+    },
+    "moex-portfolio-stress-test": {
+        "port": 30224,
+        "volume": "      - ./task_payload/files/mock_pages:/opt/mock_pages:ro\n",
+        "directory": "/opt/mock_pages",
+    },
+    "moex-sector-outlook-report": {
+        "port": 30226,
+        "volume": "      - ./task_payload/files/mock_pages:/opt/mock_pages:ro\n",
+        "directory": "/opt/mock_pages",
+    },
+    "sales-target-reconciliation": {
+        "port": 30160,
+        "volume": "      - ./task_payload/files/mock_dashboard.tar.gz:/mock/mock_dashboard.tar.gz:ro\n",
+        "directory": "/tmp/mock/mock_dashboard",
+        "extract": (
+            "        mkdir -p /tmp/mock\n"
+            "        tar -xzf /mock/mock_dashboard.tar.gz -C /tmp/mock\n"
+        ),
+    },
+}
+
+
+
 def _has_mock_http(source: Path) -> bool:
     return (source / "files" / "mock_pages.tar.gz").is_file()
 
@@ -254,6 +329,9 @@ def _compose(
     has_db_gw: bool | None = None,
     has_workspace: bool,
     has_mock: bool,
+    local_http: dict | None = None,
+    mock_http_port: int | None = None,
+    has_public_gateway: bool = True,
 ) -> str:
     if has_db_gw is None:
         has_db_gw = has_db
@@ -262,6 +340,8 @@ def _compose(
         if has_mock
         else ""
     )
+    mock_pages_service = ""
+    serve_port = mock_http_port if (has_mock and mock_http_port and has_public_gateway) else 30151
     if has_mock:
         mock_cmd = (
             "    command:\n"
@@ -271,8 +351,38 @@ def _compose(
             "        set -euo pipefail\n"
             "        mkdir -p /tmp/mock\n"
             "        tar -xzf /mock/mock_pages.tar.gz -C /tmp/mock\n"
-            "        python3 -m http.server 30151 --bind 127.0.0.1 "
+            f"        python3 -m http.server {serve_port} --bind 127.0.0.1 "
             "--directory /tmp/mock/mock_pages >/tmp/mock-http.log 2>&1 &\n"
+            "        exec sleep infinity\n"
+        )
+        if mock_http_port and has_public_gateway:
+            mock_pages_service = f"""
+  mock-pages:
+    image: "{MAIN_IMAGE}"
+    network_mode: "service:mcp-gateway-public"
+    volumes:
+      - ./task_payload/files/mock_pages.tar.gz:/mock/mock_pages.tar.gz:ro
+    command:
+      - bash
+      - -lc
+      - |
+        set -euo pipefail
+        mkdir -p /tmp/mock
+        tar -xzf /mock/mock_pages.tar.gz -C /tmp/mock
+        exec python3 -m http.server {serve_port} --bind 127.0.0.1 --directory /tmp/mock/mock_pages
+"""
+    elif local_http:
+        mock_vol = local_http["volume"]
+        extract = local_http.get("extract", "")
+        mock_cmd = (
+            "    command:\n"
+            "      - bash\n"
+            "      - -lc\n"
+            "      - |\n"
+            "        set -euo pipefail\n"
+            f"{extract}"
+            f"        python3 -m http.server {local_http['port']} --bind 127.0.0.1 "
+            f"--directory {local_http['directory']} >/tmp/mock-http.log 2>&1 &\n"
             "        exec sleep infinity\n"
         )
     else:
@@ -558,7 +668,7 @@ services:
       start_period: 20s
     depends_on:
 {public_depends_s}
-
+{mock_pages_service}
 volumes:
   cowork_workspace:
 {volumes_extra}"""
@@ -1161,6 +1271,9 @@ def convert_one(task: str, output_root: Path, catalog: dict) -> dict:
             has_db_gw=has_db_gw,
             has_workspace=has_workspace,
             has_mock=has_mock,
+            local_http=None if has_mock else PREPROCESS_HTTP_WITHOUT_TAR.get(task),
+            mock_http_port=_instruction_localhost_port(instruction) if has_mock else None,
+            has_public_gateway=True,
         ),
         encoding="utf-8",
     )

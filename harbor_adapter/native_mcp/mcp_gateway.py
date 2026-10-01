@@ -11,6 +11,7 @@ Stderr / startup errors go under --log-dir.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import traceback
@@ -54,10 +55,18 @@ def _proxy(name: str, client: ClientSession) -> Server:
         result = await client.list_tools()
         return list(result.tools)
 
+    # One in-flight call per stdio server: concurrent HTTP requests
+    # multiplex onto the single shared ClientSession, and pipelined
+    # requests have been observed to cross answers inside stateful MCP
+    # servers (canvas-enrollment-overview-excel-email answered six
+    # different course ids with the first course's data). Sequential
+    # agents never wait on this lock; only racing duplicates do.
+    _tool_lock = asyncio.Lock()
+
     @app.call_tool()
     async def call_tool(tool_name: str, arguments: dict | None):
-        result = await client.call_tool(tool_name, arguments or {})
-        return result
+        async with _tool_lock:
+            return await client.call_tool(tool_name, arguments or {})
 
     @app.list_resources()
     async def list_resources() -> list[types.Resource]:
