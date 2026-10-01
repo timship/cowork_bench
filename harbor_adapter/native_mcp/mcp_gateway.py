@@ -60,7 +60,8 @@ def _proxy(name: str, client: ClientSession) -> Server:
     # requests have been observed to cross answers inside stateful MCP
     # servers (canvas-enrollment-overview-excel-email answered six
     # different course ids with the first course's data). Sequential
-    # agents never wait on this lock; only racing duplicates do.
+    # Concurrent calls to the same server wait on this lock, including calls
+    # to different tools. This is intentional because ClientSession is shared.
     _tool_lock = asyncio.Lock()
 
     @app.call_tool()

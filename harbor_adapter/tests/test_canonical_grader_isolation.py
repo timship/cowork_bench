@@ -27,7 +27,7 @@ class GraderIsolationTests(unittest.TestCase):
 
     def test_db_compose_has_grader_on_db_net_only(self) -> None:
         """Verify DB docker-compose attaches grader exclusively to db_net and main mounts grader_out read-only."""
-        yml = _compose("demo-task", has_db=True, has_workspace=True, has_mock=False)
+        yml = _compose("demo-task", has_db=True, has_workspace=True, mock_http=None)
         self.assertIn("grader:", yml)
         self.assertIn("grader_out:/grader_out:ro", yml)
         # main networks block should not list db_net as a main attachment.
@@ -42,7 +42,7 @@ class GraderIsolationTests(unittest.TestCase):
 
     def test_no_db_compose_omits_grader(self) -> None:
         """Verify non-DB docker-compose does not include grader sidecar."""
-        yml = _compose("demo-task", has_db=False, has_workspace=True, has_mock=False)
+        yml = _compose("demo-task", has_db=False, has_workspace=True, mock_http=None)
         self.assertNotIn("grader:", yml)
         self.assertNotIn("grader_out", yml)
 

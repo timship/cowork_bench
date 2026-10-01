@@ -1,4 +1,4 @@
-"""Mock-pages sidecar is limited to tarball tasks with an instruction port."""
+"""Local HTTP fixtures are derived from task sources and visible to MCP tools."""
 
 from __future__ import annotations
 
@@ -7,9 +7,19 @@ import unittest
 from pathlib import Path
 
 ADAPTER = Path(__file__).resolve().parents[1]
+ROOT = ADAPTER.parent
+SOURCE_TASKS = ROOT / "tasks" / "finalpool"
 sys.path.insert(0, str(ADAPTER))
 
 import generate_harbor_canonical as gen  # noqa: E402
+
+
+def _instruction(task: str) -> str:
+    return (SOURCE_TASKS / task / "docs" / "task.md").read_text(encoding="utf-8")
+
+
+def _spec(task: str) -> dict | None:
+    return gen._mock_http_spec(SOURCE_TASKS / task, _instruction(task))
 
 
 class MockPagesSourceTest(unittest.TestCase):
@@ -18,52 +28,82 @@ class MockPagesSourceTest(unittest.TestCase):
         self.assertIn("[agent]\n            timeout_sec = 7200.0", text)
         self.assertNotIn("[agent]\n            timeout_sec = 1800.0", text)
 
-    def test_tarball_and_instruction_port_add_sidecar(self) -> None:
+    def test_tarball_fixture_runs_in_main_and_workspace_namespace(self) -> None:
+        spec = _spec("insales-product-launch-dashboard")
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec["port"], 30207)
         text = gen._compose(
             "insales-product-launch-dashboard",
             has_db=True,
             has_workspace=True,
-            has_mock=True,
-            mock_http_port=30207,
-            has_public_gateway=True,
+            mock_http=spec,
         )
-        self.assertIn("python3 -m http.server 30207 --bind 127.0.0.1", text)
-        self.assertIn("mock-pages:", text)
-        self.assertIn('network_mode: "service:mcp-gateway-public"', text)
+        self.assertEqual(text.count("python3 -m http.server 30207"), 2)
+        self.assertIn('network_mode: "service:mcp-gateway-workspace"', text)
         self.assertIn(
             "./task_payload/files/mock_pages.tar.gz:/mock/mock_pages.tar.gz:ro",
             text,
         )
-        self.assertNotIn("http.server 30151", text)
+        self.assertIn("--directory /tmp/mock/mock_pages", text)
 
-    def test_tarball_without_instruction_port_stays_on_main(self) -> None:
-        text = gen._compose(
-            "fetch-teamly-monitoring",
-            has_db=True,
-            has_workspace=True,
-            has_mock=True,
-            mock_http_port=None,
-            has_public_gateway=True,
+    def test_no_tar_fixture_also_gets_workspace_sidecar(self) -> None:
+        spec = _spec("canvas-faculty-workload-review")
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec["port"], 30220)
+        self.assertEqual(
+            spec["volume"],
+            "./task_payload/tmp/mock_pages:/mock/mock_pages:ro",
         )
-        self.assertIn("http.server 30151", text)
-        self.assertNotIn("mock-pages:", text)
-
-    def test_no_tar_http_fixture_has_no_sidecar(self) -> None:
-        spec = gen.PREPROCESS_HTTP_WITHOUT_TAR["canvas-faculty-workload-review"]
         text = gen._compose(
             "canvas-faculty-workload-review",
             has_db=True,
             has_workspace=True,
-            has_mock=False,
-            local_http=spec,
-            mock_http_port=None,
-            has_public_gateway=True,
+            mock_http=spec,
         )
-        self.assertIn(f"http.server {spec['port']}", text)
-        self.assertIn("/opt/mock_pages", text)
-        self.assertNotIn("mock-pages:", text)
-        self.assertNotIn("mock_pages.tar.gz", text)
+        self.assertEqual(text.count("python3 -m http.server 30220"), 2)
+        self.assertIn('network_mode: "service:mcp-gateway-workspace"', text)
+        self.assertNotIn("tar -xzf", text)
 
-    def test_instruction_port_parser(self) -> None:
-        self.assertEqual(gen._instruction_localhost_port("open http://localhost:30207 now"), 30207)
-        self.assertIsNone(gen._instruction_localhost_port("no local server"))
+    def test_formerly_unlisted_http_task_is_discovered(self) -> None:
+        spec = _spec("arxiv-survey-presentation")
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec["port"], 30231)
+        self.assertEqual(
+            spec["volume"],
+            "./task_payload/files/mock_pages:/mock/mock_pages:ro",
+        )
+
+    def test_tar_top_directory_is_taken_from_archive(self) -> None:
+        task4 = _spec("terminal-kulinar-pw-nutrition-gsheet-word")
+        task5 = _spec("terminal-fetch-sf-hr-gcal-excel-email")
+        self.assertEqual(task4["directory"], "/tmp/mock/task4_mock_pages")
+        self.assertEqual(task5["directory"], "/tmp/mock/task5_mock_pages")
+
+    def test_preprocess_port_fallback(self) -> None:
+        self.assertEqual(_spec("fetch-teamly-monitoring")["port"], 30154)
+        self.assertEqual(_spec("kulinar-scholarly-health-study")["port"], 30155)
+
+    def test_non_http_task_has_no_fixture(self) -> None:
+        self.assertIsNone(_spec("sf-hr-performance-ppt"))
+
+    def test_all_http_sources_are_covered(self) -> None:
+        specs = {}
+        for source in SOURCE_TASKS.iterdir():
+            if not source.is_dir():
+                continue
+            instruction_path = source / "docs" / "task.md"
+            instruction = (
+                instruction_path.read_text(encoding="utf-8")
+                if instruction_path.is_file()
+                else ""
+            )
+            spec = gen._mock_http_spec(source, instruction)
+            if spec:
+                specs[source.name] = spec
+                self.assertTrue(1024 <= spec["port"] <= 65535)
+                self.assertTrue(spec["directory"].startswith(("/mock/", "/tmp/mock/")))
+        self.assertEqual(len(specs), 128)
+
+
+if __name__ == "__main__":
+    unittest.main()
