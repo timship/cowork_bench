@@ -11,7 +11,14 @@ params:
     - "--headless"      # Headless mode
     - "--isolated"      # Initialize a new session each time, do not save cache
     - "--browser"
-    - "chromium"        # Please use chromium; other browsers may require sudo installation
+    - "chromium"        # Package maps this to browserName=chromium; channel is unused once executable-path is set.
+    # Pinned image CLI: --browser values are chrome/firefox/webkit/msedge.
+    # --browser chromium alone sets launchOptions.channel and leaves
+    # executablePath empty, which launches as Invalid URL: undefined.
+    # The baked browser is chromium-1182; --no-sandbox is required in-container.
+    - "--executable-path"
+    - "/ms-playwright/chromium-1182/chrome-linux/chrome"
+    - "--no-sandbox"
     - "--user-agent"
     - "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     - "--output-dir"
