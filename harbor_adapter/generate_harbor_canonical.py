@@ -8,7 +8,8 @@ Minimal delta vs harbor-native rc packaging:
   - agent-agnostic instruction (docs/task.md core only)
   - task.toml lists only mcp-gateway-public streamable-http URLs
   - dual gateway compose; no PG* on main
-  - workspace_lifecycle under tests/verifier only
+  - main finalize hook mounts only lifecycle modules at /opt/cowork_lifecycle
+  - evaluation/groundtruth stay under tests/ and are not mounted on main
   - solution/solve.sh Oracle for tasks with groundtruth_workspace
   - no Strands / ask_user / per-MCP HTTP rewrite
 """
@@ -38,6 +39,7 @@ from native_mcp.catalog import (  # noqa: E402
     split_servers,
 )
 from native_mcp.prep.db_rewrite import rewrite_preprocess_db_connections  # noqa: E402
+from native_mcp.prep.prepare_workspace import build_task_config_dict  # noqa: E402
 
 NATIVE_DIR = Path(__file__).resolve().parent / "native_mcp"
 PREP_SRC = NATIVE_DIR / "prep" / "prepare_workspace.py"
@@ -272,7 +274,7 @@ def _task_toml(task: str, servers: list[dict], *, has_db: bool) -> str:
 
             [[verifier.collect]]
             service = "main"
-            command = "PYTHONPATH=/tests/verifier:/workspace /opt/venv/bin/python3 /tests/verifier/workspace_lifecycle.py finalize"
+            command = "PYTHONPATH=/opt/cowork_lifecycle:/workspace /opt/venv/bin/python3 /opt/cowork_lifecycle/workspace_lifecycle.py finalize"
             timeout_sec = 60.0
 
             [agent]
@@ -587,7 +589,8 @@ services:
       UV_VENV_CLEAR: "1"
     volumes:
       - cowork_workspace:{SHARED_WS}
-{grader_main_vols}{mock_vol}      - ./agent_opt_stub:/opt/harbor_native:ro
+{grader_main_vols}{mock_vol}      - ./lifecycle:/opt/cowork_lifecycle:ro
+      - ./agent_opt_stub:/opt/harbor_native:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     shm_size: "2g"
@@ -1087,19 +1090,17 @@ def _solve_sh(task: str) -> str:
         from datetime import datetime
         from pathlib import Path
         ws = Path({SHARED_WS!r})
+        contract_path = Path("/solution/task_contract.json")
+        task_config = json.loads(contract_path.read_text(encoding="utf-8"))
+        task_config["agent_workspace"] = str(ws)
+        task_config["log_file"] = "/logs/artifacts/cowork/traj_log.json"
         ctx = {{
-          "task": {task!r},
+          "task": task_config.get("task_dir"),
           "provider": "oracle",
           "model": "solve.sh",
           "workspace": str(ws),
           "log_file": "/logs/artifacts/cowork/traj_log.json",
-          "task_config": {{
-            "id": {task!r},
-            "task_dir": {task!r},
-            "agent_workspace": str(ws),
-            "log_file": "/logs/artifacts/cowork/traj_log.json",
-            "single_turn_mode": True,
-          }},
+          "task_config": task_config,
           "start_time": datetime.now().isoformat(),
         }}
         (ws / ".cowork").mkdir(parents=True, exist_ok=True)
@@ -1111,7 +1112,7 @@ def _solve_sh(task: str) -> str:
             "status": "success",
             "start_time": ctx["start_time"],
             "end_time": datetime.now().isoformat(),
-            "completion": {{"confirmed": True, "reason": "oracle_solve_sh", "framework": "oracle", "evidence": ["solution/solve.sh"]}},
+            "completion": {{"confirmed": True, "reason": "oracle_solve_sh", "framework": "oracle", "evidence": ["solution/solve.sh"], "stop_reason": None}},
           }}, ensure_ascii=False, indent=2),
           encoding="utf-8",
         )
@@ -1220,6 +1221,7 @@ def convert_one(task: str, output_root: Path, catalog: dict) -> dict:
     (env_dir / "mcp_runtime").mkdir(parents=True)
     (env_dir / "prep").mkdir(parents=True)
     (env_dir / "agent_opt_stub").mkdir(parents=True)
+    (env_dir / "lifecycle").mkdir(parents=True)
     (env_dir / "task_payload").mkdir(parents=True)
     (target / "tests" / "verifier").mkdir(parents=True)
     (target / "solution").mkdir(parents=True)
@@ -1317,10 +1319,20 @@ def convert_one(task: str, output_root: Path, catalog: dict) -> dict:
 
     (env_dir / "agent_opt_stub" / "README.md").write_text(
         "Stub mount for /opt/harbor_native on main.\n"
-        "Lifecycle lives under tests/verifier only — not agent-visible.\n",
+        "The main finalize hook mounts only workspace_lifecycle.py and\n"
+        "completion.py at /opt/cowork_lifecycle. Evaluation and groundtruth\n"
+        "stay under tests/ and are not mounted on main.\n",
         encoding="utf-8",
     )
     shutil.copy2(PREP_SRC, env_dir / "prep" / "prepare_workspace.py")
+    contract = build_task_config_dict(
+        task,
+        agent_workspace=SHARED_WS,
+        log_file="/logs/artifacts/cowork/traj_log.json",
+        repo_root=ROOT,
+    )
+    contract_text = json.dumps(contract, ensure_ascii=False, indent=2) + "\n"
+    (env_dir / "prep" / "task_contract.json").write_text(contract_text, encoding="utf-8")
     shutil.copy2(PREP_SRC.parent / "db_rewrite.py", env_dir / "prep" / "db_rewrite.py")
     for name in ("__init__.py", "catalog.py", "mcp_gateway.py"):
         shutil.copy2(NATIVE_DIR / name, env_dir / "mcp_runtime" / name)
@@ -1343,6 +1355,7 @@ def convert_one(task: str, output_root: Path, catalog: dict) -> dict:
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
             )
     for name in ("workspace_lifecycle.py", "completion.py"):
+        shutil.copy2(NATIVE_DIR / name, env_dir / "lifecycle" / name)
         shutil.copy2(NATIVE_DIR / name, target / "tests" / "verifier" / name)
 
     _copy_payload(source, env_dir / "task_payload")
@@ -1362,6 +1375,9 @@ def convert_one(task: str, output_root: Path, catalog: dict) -> dict:
         solve = target / "solution" / "solve.sh"
         solve.write_text(_solve_sh(task), encoding="utf-8")
         solve.chmod(0o755)
+        (target / "solution" / "task_contract.json").write_text(
+            contract_text, encoding="utf-8"
+        )
     else:
         (target / "solution" / "NO_GROUNDTRUTH").write_text(
             f"{task}\nOracle intentionally absent — no verified ground truth.\n",

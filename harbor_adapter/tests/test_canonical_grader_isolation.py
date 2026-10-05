@@ -51,8 +51,36 @@ class GraderIsolationTests(unittest.TestCase):
         toml = _task_toml("demo-task", [{"name": "emails"}], has_db=True)
         self.assertIn('service = "grader"', toml)
         self.assertIn("bash /tests/test.sh", toml)
+        self.assertIn(
+            "/opt/cowork_lifecycle/workspace_lifecycle.py finalize",
+            toml,
+        )
+        self.assertNotIn("/tests/verifier/workspace_lifecycle.py", toml)
         toml2 = _task_toml("demo-task", [{"name": "excel"}], has_db=False)
         self.assertNotIn('service = "grader"', toml2)
+        self.assertIn(
+            "/opt/cowork_lifecycle/workspace_lifecycle.py finalize",
+            toml2,
+        )
+
+    def test_main_mounts_lifecycle_modules_not_tests(self) -> None:
+        """Finalize runs on main, which must see lifecycle modules and not tests/."""
+        for has_db in (True, False):
+            yml = _compose(
+                "demo-task",
+                has_db=has_db,
+                has_workspace=True,
+                mock_http=None,
+            )
+            main = yml.split("\n  workspace-prep:")[0]
+            self.assertIn("./lifecycle:/opt/cowork_lifecycle:ro", main)
+            self.assertNotIn("../tests:", main)
+        db = _compose("demo-task", has_db=True, has_workspace=True, mock_http=None)
+        grader = db.split("\n  grader:")[1].split("mcp-gateway-public:")[0]
+        self.assertIn("../tests:/tests:ro", grader)
+        file_only = _verifier("demo-task", has_db=False)
+        self.assertIn("Cowork traj_log.json not found", file_only)
+        self.assertIn("traj_log.json", file_only)
 
     def test_verifier_handoff_and_grader_publish(self) -> None:
         """Verify verifier script contains handoff logic and syntax check passes."""

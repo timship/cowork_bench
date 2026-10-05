@@ -5,6 +5,9 @@ verifier. Collect hooks and tests/test.sh only see /logs/agent/* and the
 workspace. Stock adapters also do not share one "task complete" API:
 
 - OpenHands: explicit ``finish`` / ``task_complete`` action in its trajectory.
+- Strands: ``strands-result.json`` ``stop_reason`` with a null ``error``.
+  ``end_turn`` and ``stop_sequence`` confirm completion. Other stop reasons
+  are recorded and are not success.
 - Qwen Code: session jsonl has turns/tools; no first-class finish. Optional
   workspace marker ``.cowork/TURN_FINISHED`` is the only agent-agnostic proof.
 - Exit code 0 is **not** completion (max iterations often exits 0).
@@ -22,6 +25,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
+
+STRANDS_SUCCESS_STOP = {"end_turn", "stop_sequence"}
 
 FINISH_ACTIONS = {
     "finish",
@@ -59,10 +64,12 @@ class CompletionInference:
     reason: str
     framework: str | None = None
     evidence: list[str] = field(default_factory=list)
+    stop_reason: str | None = None
 
     @property
     def cowork_status(self) -> str:
-        return "SUCCESS" if self.confirmed else "FAILED"
+        """Evaluator compares this to TaskStatus values, which are lowercase."""
+        return "success" if self.confirmed else "failed"
 
 
 def infer_completion(
@@ -77,6 +84,10 @@ def infer_completion(
             reason="missing_agent_dir",
             evidence=[str(agent_dir)],
         )
+
+    strands = _strands_finish(agent_dir)
+    if strands is not None:
+        return strands
 
     timeout = _scan_text_markers(agent_dir, TIMEOUT_MARKERS)
     if timeout:
@@ -143,6 +154,35 @@ def infer_completion(
         status="FAILED",
         reason="missing_agent_artifact",
         evidence=[f"no recognized agent logs under {agent_dir}"],
+    )
+
+
+def _strands_finish(agent_dir: Path) -> CompletionInference | None:
+    """Read strands-result.json. None when this directory is not a Strands run."""
+    paths = _candidate_files(agent_dir, ("strands-result.json",))
+    if not paths:
+        return None
+    path = paths[0]
+    data, err = _load_json(path)
+    if err or not isinstance(data, dict):
+        return CompletionInference(
+            confirmed=False,
+            status="FAILED",
+            reason="corrupt_agent_artifact",
+            framework="strands",
+            evidence=[err or f"{path}: not an object"],
+        )
+    raw_stop = data.get("stop_reason")
+    stop_reason = raw_stop if isinstance(raw_stop, str) and raw_stop else None
+    error = data.get("error")
+    ok = error in (None, "") and stop_reason in STRANDS_SUCCESS_STOP
+    return CompletionInference(
+        confirmed=ok,
+        status="SUCCESS" if ok else "FAILED",
+        reason="strands_stop_reason" if ok else "strands_not_success",
+        framework="strands",
+        evidence=[str(path)],
+        stop_reason=stop_reason,
     )
 
 
@@ -235,7 +275,11 @@ def _openhands_finish(agent_dir: Path) -> CompletionInference:
 def _qwen_finish(agent_dir: Path) -> CompletionInference:
     sessions = agent_dir / "qwen-sessions"
     jsonl_files = list(sessions.rglob("*.jsonl")) if sessions.is_dir() else []
-    jsonl_files += list(agent_dir.glob("*.jsonl"))
+    jsonl_files += [
+        path
+        for path in agent_dir.glob("*.jsonl")
+        if path.name != "strands-events.jsonl"
+    ]
     if not jsonl_files:
         return CompletionInference(
             confirmed=False,

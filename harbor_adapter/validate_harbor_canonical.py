@@ -84,8 +84,11 @@ def validate_task(task_dir: Path) -> list[str]:
         "environment/mcp_manifest_public.json",
         "environment/mcp_runtime/mcp_gateway.py",
         "environment/prep/prepare_workspace.py",
+        "environment/prep/task_contract.json",
         "tests/test.sh",
         "tests/verifier/workspace_lifecycle.py",
+        "environment/lifecycle/workspace_lifecycle.py",
+        "environment/lifecycle/completion.py",
         "metadata.json",
     ]
     for rel in required:
@@ -125,6 +128,12 @@ def validate_task(task_dir: Path) -> list[str]:
             errs.append("main service has PG env")
         if "env_file:" in mb and "pg.env" in mb:
             errs.append("main mounts pg.env")
+        if "./lifecycle:/opt/cowork_lifecycle:ro" not in mb:
+            errs.append("main missing lifecycle mount")
+        if "../tests:" in mb:
+            errs.append("main mounts tests tree")
+    if "/opt/cowork_lifecycle/workspace_lifecycle.py finalize" not in toml:
+        errs.append("task.toml main collect does not finalize via /opt/cowork_lifecycle")
     if "strands" in compose.lower():
         errs.append("compose mentions strands")
     # workspace gateway must not be on db_net

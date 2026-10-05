@@ -92,6 +92,7 @@ def finalize(
             reason="forced_failed",
             framework=inferred.framework,
             evidence=inferred.evidence + ["forced_failed"],
+            stop_reason=inferred.stop_reason,
         )
     cowork_status = inferred.cowork_status
     log_path = Path(ctx["log_file"])
@@ -106,6 +107,7 @@ def finalize(
             "reason": inferred.reason,
             "framework": inferred.framework,
             "evidence": inferred.evidence,
+            "stop_reason": inferred.stop_reason,
         },
     }
     log_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
