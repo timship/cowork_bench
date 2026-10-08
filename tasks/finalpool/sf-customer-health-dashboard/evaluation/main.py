@@ -381,7 +381,9 @@ def main():
 
     if not critical_ok:
         print("  FAIL: one or more CRITICAL checks failed.")
+        print("Pass: False")
         sys.exit(1)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 

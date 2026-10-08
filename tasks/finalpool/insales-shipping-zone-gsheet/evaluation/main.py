@@ -249,6 +249,7 @@ def main():
         print("\n=== CRITICAL FAILURE(S) ===")
         for c in CRITICAL_FAILURES:
             print(f"  CRITICAL: {c}")
+        print("Pass: False")
         sys.exit(1)
 
     # ---- Accuracy aggregation (non-critical structural/numeric details) -------
@@ -262,9 +263,11 @@ def main():
     print(f"\nAccuracy: {accuracy:.1f}%")
     if accuracy >= 70:
         print("=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("=== RESULT: FAIL ===")
+        print("Pass: False")
         sys.exit(1)
 
 

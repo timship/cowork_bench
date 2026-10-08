@@ -321,6 +321,7 @@ def main():
 
     overall = (not CRITICAL_FAILS) and accuracy >= 70 and excel_ok and pptx_ok and gsheet_ok
     print(f"  Overall: {'PASS' if overall else 'FAIL'}")
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

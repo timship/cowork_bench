@@ -218,6 +218,7 @@ def main():
             json.dump({"passed": PASS_COUNT, "failed": FAIL_COUNT,
                        "accuracy": accuracy, "critical_failed": critical_failed,
                        "success": success}, f)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":

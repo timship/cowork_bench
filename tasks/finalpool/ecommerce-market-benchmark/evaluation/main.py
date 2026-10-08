@@ -335,6 +335,7 @@ def run_evaluation(agent_workspace):
         for name in failed_critical:
             print(f"  [CRITICAL-FAILED] {name}")
         print("Critical semantic checks failed -> hard FAIL.")
+        print("Pass: False")
         sys.exit(1)
 
     total = len(results)
@@ -370,9 +371,11 @@ def main():
 
         if success:
             print("\nEVALUATION PASSED")
+            print("Pass: True")
             sys.exit(0)
         else:
             print("\nEVALUATION FAILED")
+            print("Pass: False")
             sys.exit(1)
     except Exception as e:
         print(f"Critical evaluation error: {e}")

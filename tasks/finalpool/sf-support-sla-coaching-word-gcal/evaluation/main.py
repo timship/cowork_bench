@@ -232,7 +232,9 @@ def main():
 
     if not critical_ok:
         print("FAIL: critical check(s) failed.")
+        print("Pass: False")
         sys.exit(1)
+    print("Pass: True" if (all_ok) else "Pass: False")
     sys.exit(0 if all_ok else 1)
 
 

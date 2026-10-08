@@ -339,6 +339,7 @@ if __name__ == "__main__":
         print("\n[CRITICAL FAILURE] Core deliverable checks failed:")
         for f in critical_failures:
             print(f"  - {f}")
+        print("Pass: False")
         sys.exit(1)
 
     # --- NON-CRITICAL Check 3: PDF archival check (structural only) ---
@@ -357,6 +358,8 @@ if __name__ == "__main__":
 
     if not pdf_ok:
         print("\nSome checks failed.")
+        print("Pass: False")
         sys.exit(1)
 
     print("\nPass all tests!")
+    print("Pass: True")

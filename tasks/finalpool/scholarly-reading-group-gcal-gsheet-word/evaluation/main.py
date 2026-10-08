@@ -320,9 +320,11 @@ def main():
     success = (not critical_failed) and accuracy >= 70
     if success:
         print("All checks passed (no critical failures, accuracy >= 70%)!")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("Evaluation FAILED (critical failure or accuracy < 70%).")
+        print("Pass: False")
         sys.exit(1)
 
 

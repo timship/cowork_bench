@@ -323,6 +323,7 @@ def main():
                 json.dump({"passed": PASS_COUNT, "failed": FAIL_COUNT,
                            "accuracy": accuracy, "success": False,
                            "critical_failures": CRITICAL_FAILURES}, f, indent=2)
+        print("Pass: False")
         sys.exit(1)
 
     all_passed = accuracy >= 70 and text_ok and gcal_ok and email_ok
@@ -335,6 +336,7 @@ def main():
                        "accuracy": accuracy, "success": all_passed,
                        "critical_failures": CRITICAL_FAILURES}, f, indent=2)
 
+    print("Pass: True" if (all_passed) else "Pass: False")
     sys.exit(0 if all_passed else 1)
 
 

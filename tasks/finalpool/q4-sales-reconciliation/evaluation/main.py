@@ -384,6 +384,7 @@ def main():
     if critical_failed:
         print(f"\n=== RESULT: FAIL (critical) ===")
         print(f"CRITICAL FAILURES: {', '.join(critical_failed)}")
+        print("Pass: False")
         sys.exit(1)
 
     overall = rp_ok and sb_ok and es_ok
@@ -392,6 +393,7 @@ def main():
     print(f"Segment Breakdown: {'PASS' if sb_ok else 'FAIL'}")
     print(f"Executive Summary: {'PASS' if es_ok else 'FAIL'}")
 
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

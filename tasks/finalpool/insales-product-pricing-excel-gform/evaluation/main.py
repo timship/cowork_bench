@@ -405,8 +405,10 @@ def main():
 
     if CRITICAL_FAILS:
         print(f"\nFAIL: critical checks failed: {CRITICAL_FAILS}")
+        print("Pass: False")
         sys.exit(1)
 
+    print("Pass: True" if (all_passed) else "Pass: False")
     sys.exit(0 if all_passed else 1)
 
 

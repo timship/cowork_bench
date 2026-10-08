@@ -263,11 +263,14 @@ def main():
     if CRITICAL_FAILED:
         print(f"CRITICAL FAIL: {CRITICAL_FAILED}")
         print("FAIL")
+        print("Pass: False")
         sys.exit(1)
     if pct < 70.0:
         print("FAIL (accuracy < 70%)")
+        print("Pass: False")
         sys.exit(1)
     print("PASS")
+    print("Pass: True")
     sys.exit(0)
 
 

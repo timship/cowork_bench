@@ -404,11 +404,14 @@ def main():
     print(f"\n=== ИТОГ: passed {PASS_COUNT}/{total} ({accuracy:.1f}%) ===")
     if CRITICAL_FAILS:
         print(f"FAIL: провалены критические проверки: {CRITICAL_FAILS}")
+        print("Pass: False")
         sys.exit(1)
     if accuracy < 70.0:
         print(f"FAIL: точность {accuracy:.1f}% < 70%")
+        print("Pass: False")
         sys.exit(1)
     print("PASS")
+    print("Pass: True")
     sys.exit(0)
 
 

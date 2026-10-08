@@ -253,6 +253,7 @@ def main():
     if crit_errors:
         print(f"\n=== RESULT: FAIL (critical) ===")
         for e in crit_errors[:10]: print(f"  {e}")
+        print("Pass: False")
         sys.exit(1)
     print("    CRITICAL PASS")
 
@@ -285,10 +286,12 @@ def main():
 
     if accuracy >= 70.0:
         print("\n=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     else:
         print(f"\n=== RESULT: FAIL ({len(all_errors)} errors) ===")
         for e in all_errors[:10]: print(f"  {e}")
+        print("Pass: False")
         sys.exit(1)
 
 

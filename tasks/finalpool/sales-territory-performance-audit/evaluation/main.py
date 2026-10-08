@@ -486,9 +486,11 @@ def main():
 
     if all_passed:
         print("PASS")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("FAIL")
+        print("Pass: False")
         sys.exit(1)
 
 

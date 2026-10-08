@@ -308,13 +308,16 @@ def main():
     if critical_fails:
         print(f"  КРИТИЧЕСКИЙ ПРОВАЛ: {critical_fails}")
         print("  Overall: FAIL")
+        print("Pass: False")
         sys.exit(1)
 
     if accuracy >= 0.70:
         print("  Overall: PASS")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("  Overall: FAIL (accuracy < 70%)")
+        print("Pass: False")
         sys.exit(1)
 
 

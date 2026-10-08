@@ -270,11 +270,14 @@ def main():
     # Any critical failure => FAIL (gate before structural/accuracy decision).
     if critical_failures:
         print(f"  Overall: FAIL (critical check failed)")
+        print("Pass: False")
         sys.exit(1)
     if file_errors:
         print(f"  Overall: FAIL")
+        print("Pass: False")
         sys.exit(1)
     print(f"  Overall: PASS")
+    print("Pass: True")
     sys.exit(0)
 
 

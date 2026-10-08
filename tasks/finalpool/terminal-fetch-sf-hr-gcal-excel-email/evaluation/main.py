@@ -544,6 +544,7 @@ def main():
     critical_ok = run_critical_checks(args.agent_workspace)
     if not critical_ok:
         print("\nCRITICAL checks failed -> FAIL")
+        print("Pass: False")
         sys.exit(1)
 
     check_excel(args.agent_workspace)
@@ -567,9 +568,11 @@ def main():
 
     if accuracy >= 70:
         print("PASS")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("FAIL")
+        print("Pass: False")
         sys.exit(1)
 
 

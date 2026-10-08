@@ -146,8 +146,10 @@ def main():
         print(f"CRITICAL FAILURES: {len(critical_failed)}")
         for n in critical_failed:
             print(f"  - {n}")
+        print("Pass: False")
         sys.exit(1)
 
+    print("Pass: True" if (FAIL_COUNT == 0) else "Pass: False")
     sys.exit(0 if FAIL_COUNT == 0 else 1)
 
 

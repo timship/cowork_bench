@@ -298,6 +298,7 @@ def main():
         for f in critical_failures:
             print(f"  {f}")
         print("\n=== RESULT: FAIL (critical check failed) ===")
+        print("Pass: False")
         sys.exit(1)
     print("  PASS")
 
@@ -340,6 +341,7 @@ def main():
     print(f"Top Products: {'PASS' if tp_ok else 'FAIL'}")
     print(f"Summary: {'PASS' if sm_ok else 'FAIL'}")
 
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

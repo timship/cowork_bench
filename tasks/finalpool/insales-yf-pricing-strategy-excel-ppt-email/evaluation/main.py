@@ -271,6 +271,7 @@ def run_evaluation(agent_workspace, groundtruth_workspace, launch_time, res_log_
     if CRITICAL_FAILS:
         msg = f"CRITICAL checks failed ({len(CRITICAL_FAILS)}): {CRITICAL_FAILS}. Passed {PASS_COUNT}/{PASS_COUNT + FAIL_COUNT} checks"
         print(f"  [GATE] {msg}")
+        print("Pass: False")
         sys.exit(1)
 
     # Threshold-based pass: all CRITICAL checks must pass (enforced above) AND overall
@@ -296,6 +297,7 @@ def main():
         args.launch_time, args.res_log_file
     )
     print(message)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":

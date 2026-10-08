@@ -356,6 +356,7 @@ def main():
         except Exception:
             pass
 
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 

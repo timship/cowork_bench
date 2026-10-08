@@ -305,8 +305,10 @@ def main():
     # Any critical failure => hard FAIL regardless of accuracy.
     if CRITICAL_FAILS:
         print(f"FAIL: critical check(s) failed: {CRITICAL_FAILS}")
+        print("Pass: False")
         sys.exit(1)
 
+    print("Pass: True" if (accuracy >= 70) else "Pass: False")
     sys.exit(0 if accuracy >= 70 else 1)
 
 

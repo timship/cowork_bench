@@ -293,6 +293,7 @@ def main():
         print(f"\n=== RESULT: FAIL (critical: {len(critical_failed)}) ===")
         for n in critical_failed:
             print(f"  CRITICAL FAIL: {n}")
+        print("Pass: False")
         sys.exit(1)
 
     # ---- NON-CRITICAL structural checks contribute to accuracy ----
@@ -324,11 +325,13 @@ def main():
 
     if accuracy >= 70:
         print("\n=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     else:
         print(f"\n=== RESULT: FAIL (accuracy {accuracy:.1f}% < 70%) ===")
         for e in all_errors[:10]:
             print(f"  {e}")
+        print("Pass: False")
         sys.exit(1)
 
 

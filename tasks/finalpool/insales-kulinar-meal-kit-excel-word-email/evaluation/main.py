@@ -311,6 +311,7 @@ def run_evaluation(agent_workspace, groundtruth_workspace, launch_time, res_log_
 
     if not critical_ok:
         print(f"=== RESULT: FAIL (critical checks failed: {CRITICAL_FAILURES}) ===")
+        print("Pass: False")
         sys.exit(1)
 
     return success, f"Passed {PASS_COUNT}/{total} checks, accuracy {accuracy:.1f}%"
@@ -329,6 +330,7 @@ def main():
         args.launch_time, args.res_log_file
     )
     print(message)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 

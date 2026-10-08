@@ -260,10 +260,12 @@ def main():
     if CRITICAL_FAILURES:
         print(f"\nCRITICAL FAILURE ({len(CRITICAL_FAILURES)}): {CRITICAL_FAILURES}")
         print("Overall: FAIL")
+        print("Pass: False")
         sys.exit(1)
 
     overall = accuracy >= 70
     print(f"  Overall: {'PASS' if overall else 'FAIL'}")
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

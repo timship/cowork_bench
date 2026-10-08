@@ -321,8 +321,10 @@ def main():
 
     if critical_failed or accuracy < 70:
         print("\n=== RESULT: FAIL ===")
+        print("Pass: False")
         sys.exit(1)
     print("\n=== RESULT: PASS ===")
+    print("Pass: True")
     sys.exit(0)
 
 

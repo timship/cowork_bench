@@ -418,12 +418,14 @@ def main():
 
     if success:
         print("\n=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     else:
         if critical_failed:
             print("\n=== RESULT: FAIL (critical check failed) ===")
         else:
             print(f"\n=== RESULT: FAIL (accuracy {accuracy:.1f}% < 70%) ===")
+        print("Pass: False")
         sys.exit(1)
 
 

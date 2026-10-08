@@ -298,13 +298,16 @@ def main():
     # Critical gate: any semantic critical failure -> FAIL, regardless of accuracy.
     if CRITICAL_FAILS:
         print("\nFAIL: critical check(s) failed: " + "; ".join(CRITICAL_FAILS))
+        print("Pass: False")
         sys.exit(1)
 
     if accuracy >= 70:
         print("PASS")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("FAIL")
+        print("Pass: False")
         sys.exit(1)
 
 

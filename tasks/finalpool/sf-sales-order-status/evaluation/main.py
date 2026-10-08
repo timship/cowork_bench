@@ -277,6 +277,7 @@ def main():
         print(f"\n=== CRITICAL FAIL ({len(critical_fail)}) ===")
         for e in critical_fail[:15]:
             print(f"  {e}")
+        print("Pass: False")
         sys.exit(1)
 
     accuracy = (passed_checks / total_checks * 100.0) if total_checks else 0.0
@@ -288,9 +289,11 @@ def main():
 
     if accuracy >= 70.0:
         print("\n=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     else:
         print(f"\n=== RESULT: FAIL (accuracy {accuracy:.1f}% < 70%) ===")
+        print("Pass: False")
         sys.exit(1)
 
 

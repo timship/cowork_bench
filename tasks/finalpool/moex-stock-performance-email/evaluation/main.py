@@ -296,13 +296,16 @@ def main():
         for e in critical_failures[:15]:
             print(f"    [CRITICAL] {e}")
         print(f"  Overall: FAIL (critical check failed)")
+        print("Pass: False")
         sys.exit(1)
 
     if file_errors:
         print(f"  Overall: FAIL")
+        print("Pass: False")
         sys.exit(1)
 
     print(f"  Overall: PASS")
+    print("Pass: True")
     sys.exit(0)
 
 

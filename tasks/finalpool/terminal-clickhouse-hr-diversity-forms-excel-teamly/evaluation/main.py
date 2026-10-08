@@ -379,6 +379,7 @@ def main():
     if critical_failed:
         print(f"  CRITICAL FAILED: {critical_failed}")
         print("  Overall: FAIL (critical check failed)")
+        print("Pass: False")
         sys.exit(1)
 
     total = PASS_COUNT + FAIL_COUNT
@@ -386,6 +387,7 @@ def main():
     print(f"  Accuracy: {accuracy:.1f}%")
     overall = accuracy >= 70
     print(f"  Overall: {'PASS' if overall else 'FAIL'}")
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

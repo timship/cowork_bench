@@ -200,6 +200,7 @@ def main():
         print(f"\n=== RESULT: FAIL ({len(critical_failures)} critical failures) ===")
         for f in critical_failures:
             print(f"  CRITICAL: {f}")
+        print("Pass: False")
         sys.exit(1)
 
     # =====================================================================
@@ -374,9 +375,11 @@ def main():
 
     if accuracy >= ACCURACY_THRESHOLD:
         print("=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     else:
         print(f"=== RESULT: FAIL (accuracy {accuracy:.1f}% < {ACCURACY_THRESHOLD}) ===")
+        print("Pass: False")
         sys.exit(1)
 
 

@@ -532,6 +532,7 @@ def run_evaluation(agent_workspace: str) -> tuple:
         )
         summary_lines.append("EVALUATION FAILED (critical)")
         print("\n".join(summary_lines))
+        print("Pass: False")
         sys.exit(1)
 
     all_passed = accuracy >= 70.0
@@ -582,9 +583,11 @@ def main():
 
         if success:
             print("\nEVALUATION PASSED")
+            print("Pass: True")
             sys.exit(0)
         else:
             print("\nEVALUATION FAILED")
+            print("Pass: False")
             sys.exit(1)
 
     except Exception as e:

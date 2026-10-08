@@ -496,8 +496,10 @@ def main():
 
     # CRITICAL gate: any critical failure => fail before the accuracy gate.
     if not critical_ok:
+        print("Pass: False")
         sys.exit(1)
 
+    print("Pass: True" if (pass_rate >= 0.7) else "Pass: False")
     sys.exit(0 if pass_rate >= 0.7 else 1)
 
 

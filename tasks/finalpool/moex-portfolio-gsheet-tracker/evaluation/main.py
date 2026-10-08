@@ -391,6 +391,7 @@ def main(args):
             critical_failed = True
     if critical_failed:
         print("\nFAIL: one or more CRITICAL checks failed.")
+        print("Pass: False")
         sys.exit(1)
 
     total_passed = 0
@@ -431,9 +432,11 @@ def main(args):
 
     if accuracy >= 70:
         print("PASS")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("FAIL")
+        print("Pass: False")
         sys.exit(1)
 
 

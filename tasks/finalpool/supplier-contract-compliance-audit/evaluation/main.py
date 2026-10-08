@@ -369,6 +369,7 @@ def run_critical_checks(workspace):
             failed.append(name)
     if failed:
         print(f"\nFAIL: critical check(s) failed: {failed}")
+        print("Pass: False")
         sys.exit(1)
 
 
@@ -411,9 +412,11 @@ def main():
 
     if accuracy >= 70:
         print("PASS")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("FAIL")
+        print("Pass: False")
         sys.exit(1)
 
 

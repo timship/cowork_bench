@@ -279,12 +279,15 @@ def main():
     if critical_failed:
         print("CRITICAL FAILURE(S): " + "; ".join(critical_failed))
         print("=== RESULT: FAIL ===")
+        print("Pass: False")
         sys.exit(1)
 
     if accuracy >= 70.0:
         print("=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     print("=== RESULT: FAIL (accuracy below 70%) ===")
+    print("Pass: False")
     sys.exit(1)
 
 

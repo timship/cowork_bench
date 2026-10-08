@@ -598,8 +598,10 @@ def main():
     # Critical failures force FAIL regardless of accuracy.
     if CRITICAL_FAILS:
         print(f"[CRITICAL] Failing due to: {CRITICAL_FAILS}")
+        print("Pass: False")
         sys.exit(1)
 
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 

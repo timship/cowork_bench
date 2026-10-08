@@ -35,6 +35,7 @@ if __name__ == "__main__":
         print("CRITICAL checks FAILED:")
         for r in critical_failed:
             print(f"  - {r['name']}: {r['msg']}")
+        print("Pass: False")
         sys.exit(1)
 
     # --- Accuracy gate over all checks ---
@@ -50,6 +51,8 @@ if __name__ == "__main__":
 
     if accuracy < ACCURACY_THRESHOLD:
         print(f"Accuracy {accuracy:.1f}% below threshold {ACCURACY_THRESHOLD}%")
+        print("Pass: False")
         sys.exit(1)
 
     print("Pass all tests!")
+    print("Pass: True")

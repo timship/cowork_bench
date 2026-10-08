@@ -404,10 +404,12 @@ def main():
     if CRITICAL_FAILS:
         print(f"\nCRITICAL FAILURES ({len(CRITICAL_FAILS)}): {CRITICAL_FAILS}")
         print("=> FAIL (критическая проверка провалена)")
+        print("Pass: False")
         sys.exit(1)
 
     pct = PASS_COUNT / total * 100
     print(f"Score: {pct:.1f}%")
+    print("Pass: True" if (pct >= 70) else "Pass: False")
     sys.exit(0 if pct >= 70 else 1)
 
 

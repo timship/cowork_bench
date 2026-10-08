@@ -403,13 +403,16 @@ def main():
     # Critical gate before the accuracy gate.
     if critical_failed:
         print("FAIL (critical check failed)")
+        print("Pass: False")
         sys.exit(1)
 
     if accuracy >= 70:
         print("PASS")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("FAIL")
+        print("Pass: False")
         sys.exit(1)
 
 

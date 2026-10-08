@@ -208,6 +208,7 @@ def main():
                 json.dump({"passed": PASS_COUNT, "failed": FAIL_COUNT,
                            "accuracy": accuracy, "success": False,
                            "critical_failures": CRITICAL_FAILURES}, f, indent=2)
+        print("Pass: False")
         sys.exit(1)
 
     overall = accuracy >= 70.0
@@ -219,6 +220,7 @@ def main():
         with open(args.res_log_file, "w") as f:
             json.dump(result, f, indent=2)
 
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

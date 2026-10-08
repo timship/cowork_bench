@@ -222,6 +222,7 @@ def main():
 
     success = (not critical_failed) and accuracy >= 70
     print("\n=== RESULT: PASS ===" if success else "\n=== RESULT: FAIL ===")
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 

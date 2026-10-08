@@ -519,8 +519,10 @@ def main():
     critical_failed = [n for n in FAILED_NAMES if n in CRITICAL_CHECKS]
     if critical_failed:
         print("\nCRITICAL FAIL: " + "; ".join(critical_failed))
+        print("Pass: False")
         sys.exit(1)
 
+    print("Pass: True" if (accuracy >= 70) else "Pass: False")
     sys.exit(0 if accuracy >= 70 else 1)
 
 

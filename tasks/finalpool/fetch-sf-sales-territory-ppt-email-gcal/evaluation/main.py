@@ -232,16 +232,19 @@ def main():
         print(f"\n=== RESULT: FAIL (critical checks failed: {len(all_critical)}) ===")
         for e in all_critical[:10]:
             print(f"  CRITICAL: {e}")
+        print("Pass: False")
         sys.exit(1)
 
     print(f"\n  Accuracy: {accuracy:.1f}% ({failed} non-critical issues / {total_checks})")
     if accuracy >= 70:
         print("\n=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     else:
         print(f"\n=== RESULT: FAIL (accuracy {accuracy:.1f}% < 70%) ===")
         for e in all_errors[:10]:
             print(f"  {e}")
+        print("Pass: False")
         sys.exit(1)
 
 

@@ -304,9 +304,11 @@ def main():
     if CRITICAL_FAILED:
         print(f"  CRITICAL FAIL: {CRITICAL_FAILED}")
         print(f"  Overall: FAIL (критический чек провален)")
+        print("Pass: False")
         sys.exit(1)
     overall = pct >= 70.0
     print(f"  Overall: {'PASS' if overall else 'FAIL'}")
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

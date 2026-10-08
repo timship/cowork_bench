@@ -379,8 +379,10 @@ def main():
     print(f"\nPassed {PASS_COUNT}/{PASS_COUNT + FAIL_COUNT} checks (accuracy={accuracy:.0%})")
     if failed_critical:
         print("CRITICAL checks failed: " + "; ".join(failed_critical))
+        print("Pass: False")
         sys.exit(1)
 
+    print("Pass: True" if (accuracy >= 0.70) else "Pass: False")
     sys.exit(0 if accuracy >= 0.70 else 1)
 
 

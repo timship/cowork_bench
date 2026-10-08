@@ -345,6 +345,7 @@ def main():
         for f in critical_failures:
             print(f"  - {f}")
         print("\n=== RESULT: FAIL (critical) ===")
+        print("Pass: False")
         sys.exit(1)
 
     total = len(soft_results)
@@ -354,9 +355,11 @@ def main():
 
     if accuracy >= 70:
         print("\n=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("\n=== RESULT: FAIL (accuracy < 70) ===")
+        print("Pass: False")
         sys.exit(1)
 
 

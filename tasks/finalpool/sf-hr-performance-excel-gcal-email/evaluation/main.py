@@ -295,11 +295,13 @@ def main():
 
     if critical_failed:
         print(f"  Overall: FAIL (critical checks failed: {critical_failed})")
+        print("Pass: False")
         sys.exit(1)
 
     overall = excel_ok and FAIL_COUNT == 0
     print(f"  Overall: {'PASS' if overall else 'FAIL'}")
 
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

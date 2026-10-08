@@ -358,13 +358,16 @@ def main():
         print(f"  [{'PASS' if v else 'FAIL'}] CRITICAL: {k}")
     if failed_critical:
         print(f"\nFAIL: critical checks not satisfied: {failed_critical}")
+        print("Pass: False")
         sys.exit(1)
 
     if accuracy >= 70:
         print("PASS")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("FAIL")
+        print("Pass: False")
         sys.exit(1)
 
 

@@ -429,6 +429,7 @@ def main():
         if args.res_log_file:
             with open(args.res_log_file, "w") as f:
                 json.dump({"passed": PASS_COUNT, "failed": FAIL_COUNT, "success": False}, f, indent=2)
+        print("Pass: False")
         sys.exit(1)
 
     overall = pct >= 70.0
@@ -436,6 +437,7 @@ def main():
     if args.res_log_file:
         with open(args.res_log_file, "w") as f:
             json.dump({"passed": PASS_COUNT, "failed": FAIL_COUNT, "success": overall}, f, indent=2)
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

@@ -510,7 +510,9 @@ def main():
     # accuracy (pass-rate) gate, regardless of how many other checks passed.
     if CRITICAL_FAILED:
         print(f"CRITICAL FAILURE -> FAIL: {CRITICAL_FAILURES}")
+        print("Pass: False")
         sys.exit(1)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 

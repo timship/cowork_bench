@@ -869,7 +869,9 @@ def main():
     print(message)
     if CRIT_FAIL > 0:
         print(f"CRITICAL FAILURE: {CRIT_FAIL} critical semantic check(s) failed -> FAIL")
+        print("Pass: False")
         sys.exit(1)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 

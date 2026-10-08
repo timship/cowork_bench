@@ -223,6 +223,7 @@ def run_evaluation(agent_workspace, groundtruth_workspace, launch_time, res_log_
 
     if CRITICAL_FAILED:
         print(f"CRITICAL checks failed: {CRITICAL_FAILED}")
+        print("Pass: False")
         sys.exit(1)
 
     total = PASS_COUNT + FAIL_COUNT
@@ -242,6 +243,7 @@ def main():
         args.launch_time, args.res_log_file
     )
     print(message)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":

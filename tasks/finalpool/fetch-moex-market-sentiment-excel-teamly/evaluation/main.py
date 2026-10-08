@@ -262,7 +262,9 @@ def main():
     print(message)
     if critical_failed:
         print("Overall: FAIL (critical check failed)")
+        print("Pass: False")
         sys.exit(1)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":

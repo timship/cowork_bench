@@ -553,6 +553,7 @@ def main():
         with open(args.res_log_file, "w") as f:
             json.dump(result, f, indent=2)
 
+    print("Pass: True" if (all_passed) else "Pass: False")
     sys.exit(0 if all_passed else 1)
 
 

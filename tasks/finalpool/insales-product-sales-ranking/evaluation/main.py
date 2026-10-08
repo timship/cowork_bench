@@ -39,6 +39,7 @@ def load_sheet_rows(wb, sheet_name):
 def fail_critical(msg):
     print(f"CRITICAL FAIL: {msg}")
     print("\n=== RESULT: FAIL (critical check) ===")
+    print("Pass: False")
     sys.exit(1)
 
 
@@ -252,9 +253,11 @@ def main():
 
     if accuracy >= 70.0:
         print("\n=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     else:
         print(f"\n=== RESULT: FAIL (accuracy {accuracy:.1f}% < 70%) ===")
+        print("Pass: False")
         sys.exit(1)
 
 

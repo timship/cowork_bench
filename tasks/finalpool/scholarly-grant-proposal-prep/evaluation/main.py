@@ -409,6 +409,7 @@ def main():
             pass
 
     success = (not critical_failed) and accuracy >= 70
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 

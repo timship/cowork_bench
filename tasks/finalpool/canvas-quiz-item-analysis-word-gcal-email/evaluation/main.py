@@ -352,13 +352,16 @@ def main():
         print(f"CRITICAL FAILURES: {len(critical_failed)}")
         for n in critical_failed:
             print(f"  - {n}")
+        print("Pass: False")
         sys.exit(1)
 
     if accuracy >= 70:
         print("PASS: no critical failures and accuracy >= 70%")
+        print("Pass: True")
         sys.exit(0)
     else:
         print(f"FAIL: accuracy {accuracy:.1f}% < 70%")
+        print("Pass: False")
         sys.exit(1)
 
 

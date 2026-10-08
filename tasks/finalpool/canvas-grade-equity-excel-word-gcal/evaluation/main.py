@@ -374,11 +374,14 @@ def main():
     if CRITICAL_FAILS:
         print(f"Critical fails ({len(CRITICAL_FAILS)}): {CRITICAL_FAILS}")
         print("FAIL: провалены критичные проверки.")
+        print("Pass: False")
         sys.exit(1)
     if accuracy >= 70:
         print("PASS")
+        print("Pass: True")
         sys.exit(0)
     print(f"FAIL: accuracy {accuracy:.1f}% < 70%")
+    print("Pass: False")
     sys.exit(1)
 
 

@@ -363,7 +363,9 @@ def main():
 
     # Critical failures hard-fail before the accuracy gate.
     if not critical_ok:
+        print("Pass: False")
         sys.exit(1)
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

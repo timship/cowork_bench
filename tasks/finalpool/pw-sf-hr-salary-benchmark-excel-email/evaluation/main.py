@@ -426,6 +426,7 @@ def main():
     critical_ok = run_critical_checks(args.agent_workspace)
     if not critical_ok:
         print("CRITICAL checks failed -> FAIL")
+        print("Pass: False")
         sys.exit(1)
 
     success, message = run_evaluation(
@@ -433,6 +434,7 @@ def main():
         args.launch_time, args.res_log_file
     )
     print(message)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":

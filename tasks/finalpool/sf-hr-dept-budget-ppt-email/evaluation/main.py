@@ -343,9 +343,11 @@ def main():
     if not success:
         reason = "critical failure" if critical_errors else f"accuracy {accuracy:.1f}% < 70%"
         print(f"\n=== RESULT: FAIL ({reason}) ===")
+        print("Pass: False")
         sys.exit(1)
     else:
         print("\n=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
 
 

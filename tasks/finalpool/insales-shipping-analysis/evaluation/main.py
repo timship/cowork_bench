@@ -312,15 +312,18 @@ def main():
         print(f"\n=== RESULT: FAIL (critical) — {len(critical_failures)} critical check(s) failed ===")
         for c in critical_failures:
             print(f"  CRITICAL: {c}")
+        print("Pass: False")
         sys.exit(1)
 
     if all_errors:
         print(f"\n=== RESULT: FAIL ({len(all_errors)} errors) ===")
         for e in all_errors[:10]:
             print(f"  {e}")
+        print("Pass: False")
         sys.exit(1)
 
     print("\n=== RESULT: PASS ===")
+    print("Pass: True")
     sys.exit(0)
 
 

@@ -329,13 +329,16 @@ def main():
         for name in CRITICAL_FAILURES:
             print(f"    - {name}")
         print(f"  Overall: FAIL (critical check failed)")
+        print("Pass: False")
         sys.exit(1)
 
     if accuracy < 70:
         print(f"  Overall: FAIL (accuracy {accuracy:.1f}% < 70%)")
+        print("Pass: False")
         sys.exit(1)
 
     print(f"  Overall: PASS")
+    print("Pass: True")
     sys.exit(0)
 
 

@@ -261,14 +261,17 @@ def main():
     # CRITICAL gate: any critical failure => hard FAIL regardless of accuracy.
     if CRITICAL_FAILS:
         print(f"CRITICAL FAILURES: {CRITICAL_FAILS}")
+        print("Pass: False")
         sys.exit(1)
 
     # Accuracy gate.
     if accuracy >= 70.0:
         print("RESULT: PASS")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("RESULT: FAIL (accuracy below 70%)")
+        print("Pass: False")
         sys.exit(1)
 
 

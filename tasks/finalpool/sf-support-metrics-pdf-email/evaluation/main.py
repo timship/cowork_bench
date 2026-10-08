@@ -228,11 +228,14 @@ def main():
 
     if not critical_ok:
         print("\n=== RESULT: FAIL (critical) ===")
+        print("Pass: False")
         sys.exit(1)
     if success:
         print("\n=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     print("\n=== RESULT: FAIL ===")
+    print("Pass: False")
     sys.exit(1)
 
 

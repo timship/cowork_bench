@@ -388,12 +388,15 @@ def main():
 
     if CRITICAL_FAILS:
         print(f"FAIL: критичные чеки провалены ({len(CRITICAL_FAILS)}): {CRITICAL_FAILS}")
+        print("Pass: False")
         sys.exit(1)
     if accuracy >= 70:
         print("=== RESULT: PASS ===")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("=== RESULT: FAIL ===")
+        print("Pass: False")
         sys.exit(1)
 
 

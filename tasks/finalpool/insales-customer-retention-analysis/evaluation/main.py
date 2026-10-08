@@ -381,10 +381,12 @@ def main():
         for cf in CRITICAL_FAILURES:
             print(f"    - {cf}")
         print("  Overall: FAIL (critical check failed)")
+        print("Pass: False")
         sys.exit(1)
 
     overall = accuracy >= 70.0
     print(f"  Overall: {'PASS' if overall else 'FAIL'}")
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

@@ -317,6 +317,7 @@ def main():
 
     overall = (not critical_failed) and accuracy >= 70
     print(f"  Overall: {'PASS' if overall else 'FAIL'}")
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

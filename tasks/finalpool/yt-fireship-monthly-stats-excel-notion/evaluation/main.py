@@ -370,12 +370,15 @@ def main():
     # Критический гейт ДО порога точности.
     if critical_failed:
         print("FAIL (critical)")
+        print("Pass: False")
         sys.exit(1)
     if accuracy >= 70:
         print("PASS")
+        print("Pass: True")
         sys.exit(0)
     else:
         print("FAIL")
+        print("Pass: False")
         sys.exit(1)
 
 

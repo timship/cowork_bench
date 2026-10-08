@@ -586,9 +586,12 @@ def main():
 
     if critical_failed:
         print("FAIL: critical check(s) failed.")
+        print("Pass: False")
         sys.exit(1)
     if accuracy >= 70:
+        print("Pass: True")
         sys.exit(0)
+    print("Pass: False")
     sys.exit(1)
 
 

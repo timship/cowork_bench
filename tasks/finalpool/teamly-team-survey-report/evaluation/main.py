@@ -357,7 +357,9 @@ def main():
 
     if CRITICAL_FAILED:
         print("FAIL (critical check failed)")
+        print("Pass: False")
         sys.exit(1)
+    print("Pass: True" if (pass_rate >= 0.7) else "Pass: False")
     sys.exit(0 if pass_rate >= 0.7 else 1)
 
 

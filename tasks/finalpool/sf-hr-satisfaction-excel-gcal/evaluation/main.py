@@ -434,6 +434,7 @@ def main():
         with open(args.res_log_file, "w") as f:
             json.dump({"passed": total_pass, "failed": total_fail, "success": all_ok}, f, indent=2)
 
+    print("Pass: True" if (all_ok) else "Pass: False")
     sys.exit(0 if all_ok else 1)
 
 

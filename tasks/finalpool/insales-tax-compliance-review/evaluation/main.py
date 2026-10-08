@@ -470,10 +470,12 @@ def main():
     if crit_failed:
         print(f"  CRITICAL FAILURES ({len(crit_failed)}): {crit_failed}")
         print(f"  Overall: FAIL (critical check failed)")
+        print("Pass: False")
         sys.exit(1)
 
     overall = (accuracy >= 70.0) and excel_ok and word_ok
     print(f"  Overall: {'PASS' if overall else 'FAIL'}")
+    print("Pass: True" if (overall) else "Pass: False")
     sys.exit(0 if overall else 1)
 
 

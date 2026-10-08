@@ -520,11 +520,14 @@ if __name__ == "__main__":
     if critical_failed:
         print(f"CRITICAL FAILURES: {critical_failed}")
         print("FAIL (critical check failed)")
+        print("Pass: False")
         sys.exit(1)
 
     if accuracy >= 70:
         print("Pass all tests!")
+        print("Pass: True")
         sys.exit(0)
     else:
         print(f"FAIL (accuracy {accuracy:.1f}% < 70%)")
+        print("Pass: False")
         sys.exit(1)

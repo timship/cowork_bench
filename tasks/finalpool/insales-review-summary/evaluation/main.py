@@ -317,6 +317,7 @@ def main():
     args = parser.parse_args()
 
     success = run_evaluation(args.agent_workspace, args.groundtruth_workspace)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 

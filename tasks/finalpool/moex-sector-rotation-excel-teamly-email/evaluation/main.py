@@ -391,6 +391,7 @@ def main():
     gt_ws = args.groundtruth_workspace or os.path.join(task_root, "groundtruth_workspace")
 
     success = run_evaluation(agent_ws, gt_ws, args.launch_time, args.res_log_file)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 

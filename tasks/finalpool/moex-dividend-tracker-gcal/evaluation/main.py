@@ -350,7 +350,9 @@ def main():
             json.dump(result, f, indent=2)
 
     if not critical_ok:
+        print("Pass: False")
         sys.exit(1)
+    print("Pass: True" if (success) else "Pass: False")
     sys.exit(0 if success else 1)
 
 
