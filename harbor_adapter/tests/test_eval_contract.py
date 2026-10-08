@@ -17,8 +17,12 @@ sys.path.insert(0, str(ROOT / "harbor_adapter"))
 
 from generate_harbor_canonical import _solve_sh  # noqa: E402
 from native_mcp.completion import infer_completion  # noqa: E402
-from native_mcp.prep.prepare_workspace import build_task_config_dict  # noqa: E402
-from native_mcp.workspace_lifecycle import finalize  # noqa: E402
+from native_mcp.prep.prepare_workspace import (  # noqa: E402
+    build_agent_context,
+    build_task_config_dict,
+    write_agent_context,
+)
+from native_mcp.workspace_lifecycle import assemble_trajectory, finalize  # noqa: E402
 from utils.data_structures.task_config import Evaluation, TaskConfig  # noqa: E402
 
 SMOKE_TASKS = (
@@ -79,16 +83,11 @@ class TaskConfigContractTests(unittest.TestCase):
                     fresh = Evaluation.build(task)
                 finally:
                     os.chdir(previous)
-                self.assertEqual(
-                    restored.evaluation.groundtruth_workspace,
-                    fresh.groundtruth_workspace,
-                )
-                self.assertEqual(
-                    restored.evaluation.evaluation_command,
-                    fresh.evaluation_command,
-                )
-                self.assertTrue(restored.evaluation.groundtruth_workspace)
-                self.assertIn(f"tasks.finalpool.{task}.evaluation.main", restored.evaluation.evaluation_command)
+                self.assertIsNone(restored.evaluation.groundtruth_workspace)
+                self.assertIsNone(restored.evaluation.evaluation_command)
+                self.assertTrue(fresh.groundtruth_workspace)
+                self.assertIn(f"tasks.finalpool.{task}.evaluation.main", fresh.evaluation_command)
+                self.assertNotIn("evaluation.main", json.dumps(data))
                 self.assertIn("system_prompts", data)
                 self.assertIn("initialization", data)
                 self.assertIn("stop", data)
@@ -97,8 +96,10 @@ class TaskConfigContractTests(unittest.TestCase):
 
     def test_solve_sh_loads_contract_instead_of_five_key_config(self) -> None:
         script = _solve_sh(SMOKE_TASKS[0])
-        self.assertIn("/solution/task_contract.json", script)
-        self.assertNotIn('"single_turn_mode": True', script)
+        self.assertNotIn("/solution/task_contract.json", script)
+        self.assertNotIn("evaluation.main", script)
+        self.assertIn('"evaluation_command": None', script)
+        self.assertIn('"single_turn_mode": True', script)
 
     def test_finalize_writes_lowercase_status_and_strands_stop_reason(self) -> None:
         task = SMOKE_TASKS[0]
@@ -107,16 +108,16 @@ class TaskConfigContractTests(unittest.TestCase):
         log = ws / "traj_log.json"
         ctx = ws / ".cowork"
         ctx.mkdir()
-        (ctx / "cli_context.json").write_text(
-            json.dumps(
-                {
-                    "task": task,
-                    "log_file": str(log),
-                    "task_config": config,
-                    "start_time": "t0",
-                }
+        write_agent_context(
+            ctx / "cli_context.json",
+            build_agent_context(
+                task,
+                provider="harbor-canonical",
+                model="n/a",
+                workspace=str(ws),
+                log_file=str(log),
+                start_time="t0",
             ),
-            encoding="utf-8",
         )
         agent = Path(tempfile.mkdtemp(prefix="cowork-strands-"))
         (agent / "strands-result.json").write_text(
@@ -125,6 +126,12 @@ class TaskConfigContractTests(unittest.TestCase):
         )
         inferred = infer_completion(agent)
         self.assertEqual(inferred.stop_reason, "end_turn")
+        from native_mcp import workspace_lifecycle as wl
+
+        artifacts = Path(tempfile.mkdtemp(prefix="cowork-artifacts-"))
+        previous = wl.AGENT_COMPLETION_PATH
+        wl.AGENT_COMPLETION_PATH = artifacts / "agent_completion.json"
+        self.addCleanup(lambda: setattr(wl, "AGENT_COMPLETION_PATH", previous))
         result = finalize(
             status=None,
             workspace=ws,
@@ -132,12 +139,32 @@ class TaskConfigContractTests(unittest.TestCase):
             context_path=ctx / "cli_context.json",
         )
         self.assertEqual(result["status"], "success")
+        public = json.loads(wl.AGENT_COMPLETION_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(public["status"], "success")
+        self.assertEqual(public["completion"]["stop_reason"], "end_turn")
+        self.assertEqual(public["completion"]["framework"], "strands")
+        self.assertNotIn("evaluation", json.dumps(public))
+        planted = ws / "task_contract.json"
+        planted.write_text(
+            json.dumps({"evaluation": {"evaluation_command": "/tmp/evil-grader", "groundtruth_workspace": "/tmp/evil-gt"}}),
+            encoding="utf-8",
+        )
+        trusted_dir = Path(tempfile.mkdtemp(prefix="cowork-trusted-"))
+        trusted = trusted_dir / "task_contract.json"
+        trusted.write_text(json.dumps(config), encoding="utf-8")
+        assemble_trajectory(
+            task=task,
+            contract_path=trusted,
+            completion_path=wl.AGENT_COMPLETION_PATH,
+            log_path=log,
+        )
         dumped = json.loads(log.read_text(encoding="utf-8"))
         self.assertEqual(dumped["status"], "success")
         self.assertEqual(dumped["completion"]["stop_reason"], "end_turn")
-        self.assertEqual(dumped["completion"]["framework"], "strands")
-        restored = TaskConfig.from_dict(dumped["config"])
-        self.assertIn("evaluation.main", restored.evaluation.evaluation_command)
+        self.assertNotIn("evaluation.main", json.dumps(dumped))
+        restored = TaskConfig.from_dict(dict(dumped["config"]))
+        self.assertIsNone(restored.evaluation.evaluation_command)
+        self.assertTrue(planted.is_file())
 
     def test_invalid_config_is_still_rejected(self) -> None:
         TaskEvaluator = _evaluator()
@@ -152,7 +179,7 @@ class TaskConfigContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         outcome = asyncio.run(TaskEvaluator.evaluate_from_log_file(str(log)))
-        self.assertFalse(outcome["pass"])
+        self.assertIsNone(outcome["pass"])
         self.assertEqual(outcome["failure"], "evaluation_error")
         self.assertEqual(outcome["details"], "'evaluation'")
 
@@ -162,8 +189,11 @@ class TaskConfigContractTests(unittest.TestCase):
         sentinel = Path(tempfile.mkdtemp(prefix="cowork-grader-")) / "reached"
         grader = sentinel.parent / "grader.py"
         grader.write_text(
+            "import sys\n"
             "from pathlib import Path\n"
-            f"Path({str(sentinel)!r}).write_text('ok', encoding='utf-8')\n",
+            f"Path({str(sentinel)!r}).write_text('ok', encoding='utf-8')\n"
+            "print('Pass:    True')\n"
+            "sys.exit(0)\n",
             encoding="utf-8",
         )
         config = build_task_config_dict(task, repo_root=ROOT)

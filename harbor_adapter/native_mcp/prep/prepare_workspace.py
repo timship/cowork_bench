@@ -2,7 +2,7 @@
 """Agent-agnostic workspace prepare (no Strands / UA / OH / QC).
 
 Copies initial_workspace, runs task preprocess (DB seed + mock HTTP),
-writes cli_context.json whose task_config is TaskConfig.to_dict().
+and writes a public cli_context.json. The grader contract is not written here.
 """
 
 from __future__ import annotations
@@ -39,76 +39,83 @@ def build_task_config_dict(
     log_file: str = str(TRAJ_LOG),
     repo_root: Path | None = None,
 ) -> dict:
-    """Serialize a TaskConfig. The dict schema is TaskConfig.to_dict(), not a hand-written subset.
+    """Schema-valid TaskConfig without precomputed evaluation paths.
 
-    Evaluation and initialization paths come from Evaluation.build / Initialization.build
-    against the source tree. task_root is kept relative so the file does not embed the
-    generator host path; from_dict resolves it in the grader process.
+    The private fields stay None. Evaluation.build runs in the verifier, after
+    the agent has stopped and the task tree is mounted only there.
     """
-    root = repo_root
-    if root is None:
-        here = Path(__file__).resolve()
-        candidate = here.parents[3]
-        root = candidate if (candidate / "tasks" / "finalpool" / task).is_dir() else Path.cwd()
+    del repo_root
+    here = Path(__file__).resolve()
+    shell = here.parents[1] / "verifier_shell.py"
+    if not shell.is_file():
+        raise SystemExit("verifier shell is missing")
+    import importlib.util
 
-    repo = str(root)
-    if repo not in sys.path:
-        sys.path.insert(0, repo)
-    from utils.data_structures.task_config import (  # noqa: WPS433
-        Evaluation,
-        Initialization,
-        StopConditions,
-        SystemPrompts,
-        TaskConfig,
+    spec = importlib.util.spec_from_file_location("cowork_verifier_shell", shell)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.sanitized_task_config(
+        task, agent_workspace=agent_workspace, log_file=log_file
     )
-    from utils.general.helper import read_json  # noqa: WPS433
 
-    previous = os.getcwd()
-    try:
-        os.chdir(root)
-        raw_path = Path("tasks/finalpool") / task / "task_config.json"
-        raw = read_json(raw_path) if raw_path.is_file() else {}
-        cfg = TaskConfig(
-            task_dir=task,
-            id=task,
-            needed_mcp_servers=raw.get("needed_mcp_servers"),
-            needed_local_tools=raw.get("needed_local_tools"),
-            max_turns=raw.get("max_turns"),
-            meta=raw.get("meta") or {},
-            agent_workspace=agent_workspace,
-            log_file=log_file,
-            single_turn_mode=True,
-            task_str="",
-            evaluation=Evaluation.build(task),
-            system_prompts=SystemPrompts(agent=None, user=None),
-            initialization=Initialization.build(task),
-            stop=StopConditions.build(raw.get("stop")),
-            launch_time="",
-        )
-        data = cfg.to_dict()
-    finally:
-        os.chdir(previous)
-    data["task_root"] = task
-    data["agent_workspace"] = agent_workspace
-    data["log_file"] = log_file
-    data["task_str"] = ""
-    return data
+
+PUBLIC_CONTEXT_KEYS = (
+    "task",
+    "provider",
+    "model",
+    "workspace",
+    "log_file",
+    "start_time",
+)
+
+
+def build_agent_context(
+    task: str,
+    *,
+    provider: str,
+    model: str,
+    workspace: str,
+    log_file: str,
+    start_time: str,
+) -> dict:
+    """Runtime note for the agent workspace. No TaskConfig and no grader fields."""
+    return {
+        "task": task,
+        "provider": provider,
+        "model": model,
+        "workspace": workspace,
+        "log_file": log_file,
+        "start_time": start_time,
+    }
+
+
+def reset_agent_context(path: Path = CONTEXT) -> None:
+    """Drop any previous attempt before prepare can fail halfway."""
+    if path.is_symlink() or path.exists():
+        path.unlink()
+
+
+def write_agent_context(path: Path, payload: dict) -> None:
+    unexpected = set(payload) - set(PUBLIC_CONTEXT_KEYS)
+    if unexpected:
+        raise SystemExit(f"refusing private fields in agent context: {sorted(unexpected)}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
 
 
 def resolve_task_config(task: str, agent_workspace: str, log_file: str) -> dict:
-    """Load the generated contract, or build one when the source tree is present."""
+    """Return the sanitized shell. A precomputed contract file is refused."""
     beside = Path(__file__).resolve().parent / CONTRACT_NAME
     if beside.is_file():
-        data = json.loads(beside.read_text(encoding="utf-8"))
-    else:
-        data = build_task_config_dict(
-            task, agent_workspace=agent_workspace, log_file=log_file
-        )
-    data["task_dir"] = task
-    data["id"] = task
-    data["agent_workspace"] = agent_workspace
-    data["log_file"] = log_file
-    return data
+        raise SystemExit("refusing precomputed task contract")
+    return build_task_config_dict(
+        task, agent_workspace=agent_workspace, log_file=log_file
+    )
 
 
 def main() -> None:
@@ -117,7 +124,10 @@ def main() -> None:
     args = parser.parse_args()
 
     SHARED.mkdir(parents=True, exist_ok=True)
-    # Clean residual agent files but keep volume.
+    # Remove the previous attempt before preprocess. A failed prepare must not
+    # leave the last run's context for the evaluator to read.
+    reset_agent_context(CONTEXT)
+    # Clean residual agent files but keep the volume.
     for child in list(SHARED.iterdir()):
         if child.name == ".cowork":
             continue
@@ -165,18 +175,16 @@ def main() -> None:
         if rc != 0:
             raise SystemExit(f"preprocess failed with code {rc}")
 
-    CONTEXT.parent.mkdir(parents=True, exist_ok=True)
     TRAJ_LOG.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "task": args.task,
-        "provider": "harbor-canonical",
-        "model": "n/a",
-        "workspace": str(SHARED),
-        "log_file": str(TRAJ_LOG),
-        "task_config": resolve_task_config(args.task, str(SHARED), str(TRAJ_LOG)),
-        "start_time": datetime.now().isoformat(),
-    }
-    CONTEXT.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = build_agent_context(
+        args.task,
+        provider="harbor-canonical",
+        model="n/a",
+        workspace=str(SHARED),
+        log_file=str(TRAJ_LOG),
+        start_time=datetime.now().isoformat(),
+    )
+    write_agent_context(CONTEXT, payload)
     print(json.dumps({"workspace": str(SHARED), "context": str(CONTEXT)}))
 
 

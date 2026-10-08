@@ -22,6 +22,11 @@ from generate_harbor_canonical import (  # noqa: E402
 )
 
 
+def _grader_region(body: str) -> str:
+    text = body if body.endswith("\n") or body == "" else body + "\n"
+    return "== Evaluation STDOUT ==\n" + text + "== Evaluation STDERR ==\n"
+
+
 class GraderIsolationTests(unittest.TestCase):
     """Regression tests for DB grader sidecar isolation and handoff verification."""
 
@@ -253,24 +258,54 @@ class CompletionContractClassifierTests(unittest.TestCase):
         self.assertEqual(reward, "0")
 
     def test_ua_pass_true_reward1(self) -> None:
-        """UA mode: eval_res.json has pass: true -> reward 1."""
+        """UA content pass requires rc 0, Pass: True, and eval_res pass true."""
         comp, reward = self._run_classifier(
-            "ua", 0, "run_eval done", "", eval_res_data={"pass": True}
+            "ua", 0, _grader_region("Pass:    True\n"), "", eval_res_data={"pass": True}
         )
         self.assertEqual(comp["status"], "succeeded")
         self.assertEqual(comp["technical_status"], "completed")
         self.assertEqual(comp["reward"], 1)
+        self.assertTrue(comp["evaluator_completed"])
+        self.assertIsNone(comp["error_type"])
         self.assertEqual(reward, "1")
 
     def test_ua_pass_false_reward0(self) -> None:
-        """UA mode: eval_res.json has pass: false -> reward 0."""
+        """UA content fail requires rc 1 and an explicit Pass: False verdict."""
         comp, reward = self._run_classifier(
-            "ua", 0, "run_eval done", "", eval_res_data={"pass": False}
+            "ua", 1, _grader_region("Pass:    False\n"), "", eval_res_data={"pass": False}
         )
         self.assertEqual(comp["status"], "succeeded")
         self.assertEqual(comp["technical_status"], "completed")
         self.assertEqual(comp["reward"], 0)
+        self.assertTrue(comp["evaluator_completed"])
+        self.assertIsNone(comp["error_type"])
+        self.assertEqual(comp["error_message"], "Content evaluation failed")
         self.assertEqual(reward, "0")
+
+    def test_ua_rc1_without_pass_false_is_evaluator_failure(self) -> None:
+        comp, reward = self._run_classifier(
+            "ua", 1, "run_eval crashed\n", "", eval_res_data={"pass": False}
+        )
+        self.assertEqual(comp["status"], "failed")
+        self.assertEqual(comp["technical_status"], "error")
+        self.assertFalse(comp["evaluator_completed"])
+        self.assertEqual(comp["error_type"], "evaluator_failure")
+        self.assertNotEqual(comp["error_message"], "Content evaluation failed")
+        self.assertIsNone(reward)
+
+    def test_ua_traceback_is_not_content_fail(self) -> None:
+        stderr = "Traceback (most recent call last):\nRuntimeError: boom\n"
+        comp, reward = self._run_classifier(
+            "ua",
+            1,
+            _grader_region("Pass:    False\n"),
+            stderr,
+            eval_res_data={"pass": False},
+        )
+        self.assertEqual(comp["technical_status"], "error")
+        self.assertEqual(comp["error_type"], "python_traceback")
+        self.assertFalse(comp["evaluator_completed"])
+        self.assertIsNone(reward)
 
     def test_ua_missing_traj_log(self) -> None:
         """UA mode: missing traj_log.json produces error."""

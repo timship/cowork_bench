@@ -1,9 +1,58 @@
 from typing import Dict, Any, List, Optional
-from utils.roles.task_agent import TaskStatus
 from utils.data_structures.task_config import TaskConfig, Evaluation
 from utils.general.helper import run_command, read_json, write_json
+from utils.evaluation.verdict import parse_grader_stdout
 import logging
 import os
+
+_SYNTAX_MARKERS = (
+    "SyntaxError:",
+    "ImportError:",
+    "ModuleNotFoundError:",
+    "NameError:",
+)
+
+
+def _technical(details: str, grader_rc: int) -> Dict[str, Any]:
+    return {
+        "pass": None,
+        "verdict": None,
+        "grader_rc": grader_rc,
+        "failure": "evaluator_failure",
+        "details": details,
+    }
+
+
+def _content_outcome(stdout: str, stderr: str, returncode: Optional[int]) -> Dict[str, Any]:
+    """Accept a content result only from one grader verdict line plus its exit code."""
+    rc = returncode if isinstance(returncode, int) else 2
+    combined = f"{stdout}\n{stderr}"
+    parsed = parse_grader_stdout(stdout)
+    if "Traceback (most recent call last):" in combined:
+        return _technical("traceback", rc if rc > 1 or rc < 0 else 2)
+    if any(marker in combined for marker in _SYNTAX_MARKERS):
+        return _technical("syntax_or_import_error", rc if rc > 1 or rc < 0 else 2)
+    if rc < 0 or rc > 1:
+        return _technical(parsed.problem or "evaluator_failure", rc)
+    if parsed.problem or parsed.value is None:
+        return _technical(parsed.problem or "missing", 2)
+    if parsed.value == "True" and rc == 0:
+        return {
+            "pass": True,
+            "verdict": "True",
+            "grader_rc": 0,
+            "details": "All evaluation checks passed, and task status is success",
+        }
+    if parsed.value == "False" and rc == 1:
+        return {
+            "pass": False,
+            "verdict": "False",
+            "grader_rc": 1,
+            "failure": "content_evaluation_failed",
+            "details": "Content evaluation failed",
+        }
+    return _technical("verdict_exit_mismatch", 2)
+
 
 class TaskEvaluator:
     """Task evaluator"""
@@ -51,7 +100,8 @@ class TaskEvaluator:
             groundtruth_workspace = groundtruth_workspace or fresh.groundtruth_workspace
 
         # First check task status: only SUCCESS is possible to pass; otherwise return pass = None
-        if task_status != TaskStatus.SUCCESS.value:
+        # Same string as TaskStatus.SUCCESS. Importing task_agent pulls the agent stack.
+        if task_status != "success":
             return {
                 "pass": None,
                 "details": f"Task status: {task_status}, only SUCCESS counts as pass; pass is null"
@@ -65,7 +115,10 @@ class TaskEvaluator:
         # with zero checks executed.
         if eval_command is None:
             return {
-                "pass": False,
+                "pass": None,
+                "verdict": None,
+                "grader_rc": 2,
+                "failure": "evaluator_failure",
                 "details": (f"Evaluation command could not be resolved for task "
                             f"'{task_config.task_dir}' — grader missing or cwd is not "
                             f"the repo root; refusing to report a pass."),
@@ -81,17 +134,9 @@ class TaskEvaluator:
             print(output)
             print("== Evaluation STDERR ==")
             print(error)
-            if returncode != 0:
-                return {
-                    "pass": False,
-                    "failure": output,
-                }
-                
-        # Finally, it's successful
-        return {
-            "pass": True,
-            "details": "All evaluation checks passed, and task status is success"
-        }
+            return _content_outcome(output or "", error or "", returncode)
+
+        return _technical("evaluator_failure", grader_rc=2)
     
     @staticmethod
     async def evaluate_from_log_file(log_file_path: str, allow_resume: bool = False) -> Dict[str, Any]:
@@ -99,7 +144,9 @@ class TaskEvaluator:
         try:            
             if not os.path.exists(log_file_path):
                 return {
-                    "pass": False,
+                    "pass": None,
+                    "verdict": None,
+                    "grader_rc": 2,
                     "failure": "log_file_not_found",
                     "details": f"Log file not found: {log_file_path}"
                 }
@@ -117,7 +164,9 @@ class TaskEvaluator:
         except Exception as e:
             logging.error(f"Error evaluating from log file {log_file_path}: {e}")
             return {
-                "pass": False,
+                "pass": None,
+                "verdict": None,
+                "grader_rc": 2,
                 "failure": "evaluation_error",
                 "details": str(e)
             }

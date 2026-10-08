@@ -42,9 +42,24 @@ async def main() -> int:
 
     print(f"[run_eval] Evaluating log: {log_file}")
     eval_res = await TaskEvaluator.evaluate_from_log_file(log_file)
-    print(f"Pass:    {eval_res.get('pass', False)}")
-    print(f"Details: {eval_res.get('details', eval_res.get('failure', 'N/A'))}")
-    return 0 if eval_res.get("pass", False) else 1
+    detail = eval_res.get("details", eval_res.get("failure", "N/A"))
+    verdict = eval_res.get("verdict")
+    passed = eval_res.get("pass")
+    grader_rc = eval_res.get("grader_rc")
+    # The grader stdout already carries the only Pass line. Do not invent one.
+    if verdict == "True" and passed is True and grader_rc == 0:
+        print(f"Details: {detail}")
+        return 0
+    if verdict == "False" and passed is False and grader_rc == 1:
+        print(f"Details: {detail}")
+        return 1
+    print("evaluator technical failure")
+    print(f"Details: {detail}")
+    if isinstance(grader_rc, int) and grader_rc < 0:
+        return 128 + abs(grader_rc)
+    if isinstance(grader_rc, int) and grader_rc > 1:
+        return grader_rc
+    return 2
 
 
 if __name__ == "__main__":

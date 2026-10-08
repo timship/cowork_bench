@@ -84,7 +84,7 @@ def validate_task(task_dir: Path) -> list[str]:
         "environment/mcp_manifest_public.json",
         "environment/mcp_runtime/mcp_gateway.py",
         "environment/prep/prepare_workspace.py",
-        "environment/prep/task_contract.json",
+        "tests/grader_private/task_contract.json",
         "tests/test.sh",
         "tests/verifier/workspace_lifecycle.py",
         "environment/lifecycle/workspace_lifecycle.py",
@@ -134,6 +134,54 @@ def validate_task(task_dir: Path) -> list[str]:
             errs.append("main mounts tests tree")
     if "/opt/cowork_lifecycle/workspace_lifecycle.py finalize" not in toml:
         errs.append("task.toml main collect does not finalize via /opt/cowork_lifecycle")
+    if (task_dir / "environment" / "prep" / "task_contract.json").exists():
+        errs.append("prep still contains task_contract.json")
+    if (task_dir / "solution" / "task_contract.json").exists():
+        errs.append("solution contains a task contract")
+    private_contract = task_dir / "tests" / "grader_private" / "task_contract.json"
+    if private_contract.is_file():
+        try:
+            private_data = json.loads(private_contract.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            errs.append("grader contract is not valid JSON")
+            private_data = None
+        if isinstance(private_data, dict):
+            if private_data.get("task_dir") != tid:
+                errs.append("grader contract task_dir mismatch")
+            evaluation = private_data.get("evaluation", None)
+            if not isinstance(evaluation, dict):
+                errs.append("grader contract missing evaluation object")
+            elif (
+                set(evaluation) != {"groundtruth_workspace", "evaluation_command"}
+                or evaluation.get("groundtruth_workspace") is not None
+                or evaluation.get("evaluation_command") is not None
+            ):
+                errs.append("grader contract evaluation is not null/null")
+            if "evaluation.main" in json.dumps(private_data):
+                errs.append("grader contract contains an evaluation module")
+    script = (task_dir / "tests" / "test.sh").read_text(encoding="utf-8") if (task_dir / "tests" / "test.sh").exists() else ""
+    if "--contract " not in script or "/tests/grader_private/task_contract.json" not in script:
+        errs.append("verifier does not read the grader-only contract")
+    for service in (
+        "main",
+        "workspace-prep",
+        "mcp-gateway-workspace",
+        "mcp-gateway-public",
+        "mock-pages",
+    ):
+        block = re.search(
+            rf"(?ms)^  {re.escape(service)}:.*?(?=^  [a-z0-9-]+:|\Z)",
+            compose,
+        )
+        if not block:
+            continue
+        body = block.group(0)
+        if "grader_private" in body or "task_contract" in body or "../tests:" in body:
+            errs.append(f"{service} mounts private contract")
+    if "evaluation_command" in instr or "groundtruth_workspace" in instr:
+        errs.append("instruction contains grader contract")
+    if "evaluation_command" in toml or "groundtruth_workspace" in toml:
+        errs.append("task.toml contains grader contract")
     if "strands" in compose.lower():
         errs.append("compose mentions strands")
     # workspace gateway must not be on db_net
