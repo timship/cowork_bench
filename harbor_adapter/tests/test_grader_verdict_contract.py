@@ -6,7 +6,6 @@ This does not execute the graders and is not a runtime proof of pass rate.
 from __future__ import annotations
 
 import ast
-import subprocess
 import unittest
 from pathlib import Path
 
@@ -32,22 +31,41 @@ def _call_name(node: ast.AST) -> str:
     return ""
 
 
-def _added_lines(rel: str) -> tuple[list[str], list[str]]:
-    old = subprocess.check_output(
-        ["git", "-C", str(ROOT), "show", f"HEAD:{rel}"],
-        text=True,
-    )
-    new = (ROOT / rel).read_text(encoding="utf-8")
-    import difflib
+def _parents(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    mapping: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            mapping[child] = node
+    return mapping
 
-    added: list[str] = []
-    deleted: list[str] = []
-    for line in difflib.ndiff(old.splitlines(), new.splitlines()):
-        if line.startswith("- "):
-            deleted.append(line[2:])
-        elif line.startswith("+ "):
-            added.append(line[2:])
-    return added, deleted
+
+def _pass_prints(source: str, tree: ast.AST) -> list[tuple[int, str, bool]]:
+    """Return Pass prints as (lineno, statement, inside_except)."""
+    parents = _parents(tree)
+    found: list[tuple[int, str, bool]] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and _call_name(node) == "print"):
+            continue
+        segment = (ast.get_source_segment(source, node) or "").strip()
+        if "Pass:" not in segment:
+            continue
+        inside_except = False
+        current: ast.AST | None = node
+        while current in parents:
+            current = parents[current]
+            if isinstance(current, ast.ExceptHandler):
+                inside_except = True
+        found.append((node.lineno, segment, inside_except))
+    return found
+
+
+def _previous_statement(lines: list[str], lineno: int) -> tuple[int, str]:
+    index = lineno - 2
+    while index >= 0 and not lines[index].strip():
+        index -= 1
+    if index < 0:
+        return 0, ""
+    return index + 1, lines[index].strip()
 
 
 class GraderVerdictStaticTests(unittest.TestCase):
@@ -56,68 +74,50 @@ class GraderVerdictStaticTests(unittest.TestCase):
         self.assertEqual(len(tasks), 496)
         mechanical = manual = 0
         for task_dir in tasks:
-            rel = f"tasks/finalpool/{task_dir.name}/evaluation/main.py"
-            added, deleted = _added_lines(rel)
-            self.assertEqual(deleted, [], task_dir.name)
-            for line in added:
-                text = line.strip()
-                self.assertTrue(
-                    text in {PASS_TRUE, PASS_FALSE}
-                    or (
-                        text.startswith('print("Pass: True" if (')
-                        and text.endswith(') else "Pass: False")')
-                    ),
-                    f"{task_dir.name}: {text}",
-                )
             source = (task_dir / "evaluation" / "main.py").read_text(encoding="utf-8")
             tree = ast.parse(source)
-            parents: dict[ast.AST, ast.AST] = {}
-            for node in ast.walk(tree):
-                for child in ast.iter_child_nodes(node):
-                    parents[child] = node
-            for node in ast.walk(tree):
-                if not (isinstance(node, ast.Call) and _call_name(node) == "print"):
-                    continue
-                segment = ast.get_source_segment(source, node) or ""
-                if "Pass:" not in segment:
-                    continue
-                current: ast.AST | None = node
-                while current in parents:
-                    current = parents[current]
-                    self.assertNotIsInstance(
-                        current, ast.ExceptHandler, f"{task_dir.name}:{node.lineno}"
-                    )
             plan = analyze_task(task_dir)
             self.assertFalse(plan.unresolved, task_dir.name)
             lines = source.splitlines()
+            prints = _pass_prints(source, tree)
+            self.assertTrue(all(not inside for _, _, inside in prints), task_dir.name)
+            expected: dict[int, str] = {}
             content_sites = 0
             for site in plan.sites:
-                previous = ""
-                index = site.lineno - 2
-                while index >= 0 and not lines[index].strip():
-                    index -= 1
-                if index >= 0:
-                    previous = lines[index].strip()
+                line_no, previous = _previous_statement(lines, site.lineno)
                 if site.action == "pass_true":
                     self.assertEqual(previous, PASS_TRUE, f"{task_dir.name}:{site.lineno}")
+                    expected[line_no] = PASS_TRUE
                     content_sites += 1
                 elif site.action == "pass_false":
                     self.assertEqual(previous, PASS_FALSE, f"{task_dir.name}:{site.lineno}")
+                    expected[line_no] = PASS_FALSE
                     content_sites += 1
                 elif site.action == "conditional":
                     self.assertEqual(previous, site.print_expr, f"{task_dir.name}:{site.lineno}")
+                    expected[line_no] = site.print_expr
                     content_sites += 1
                 elif site.action == "technical":
-                    self.assertFalse(previous.startswith('print("Pass:'), f"{task_dir.name}:{site.lineno}")
+                    self.assertFalse(
+                        previous.startswith('print("Pass:'),
+                        f"{task_dir.name}:{site.lineno}",
+                    )
                 else:
                     self.fail(f"unresolved {task_dir.name}")
             if plan.implicit_pass_lineno is not None:
+                verdict_line = plan.implicit_pass_lineno + 1
                 self.assertEqual(lines[plan.implicit_pass_lineno].strip(), PASS_TRUE)
+                expected[verdict_line] = PASS_TRUE
                 content_sites += 1
+            observed = {line_no: text for line_no, text, _ in prints}
+            self.assertEqual(observed, expected, task_dir.name)
+            self.assertEqual(len(observed), content_sites, task_dir.name)
             actions = {site.action for site in plan.sites}
-            self.assertTrue("pass_true" in actions or "conditional" in actions or plan.implicit_pass_lineno)
-            self.assertTrue("pass_false" in actions or "conditional" in actions)
-            self.assertEqual(len(added), content_sites, task_dir.name)
+            self.assertTrue(
+                "pass_true" in actions or "conditional" in actions or plan.implicit_pass_lineno,
+                task_dir.name,
+            )
+            self.assertTrue("pass_false" in actions or "conditional" in actions, task_dir.name)
             if plan.change_class == "manual":
                 manual += 1
             else:
